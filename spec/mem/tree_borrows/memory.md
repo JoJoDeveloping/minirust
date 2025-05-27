@@ -142,8 +142,10 @@ impl<T: Target> TreeBorrowsMemory<T> {
     fn ptr_permissions(ptr_type: PtrType, fn_entry: bool) -> Option<(Permission, LayoutStrategy, Protected)> {
         match ptr_type {
             PtrType::Ref { mutbl, pointee } if !pointee.freeze && mutbl == Mutability::Immutable => {
-                // Shared reference to interior mutable type: retagging is a NOP.
-                None
+                // Shared reference to interior mutable type.
+                let protected = if fn_entry { Protected::Strong } else { Protected::No };
+                let permission = Permission::default(mutbl, pointee, protected);
+                Some((permission, pointee.layout, protected))
             },
             PtrType::Ref { mutbl, pointee } if !pointee.unpin && mutbl == Mutability::Mutable => {
                 // Mutable reference to pinning type: retagging is a NOP.
