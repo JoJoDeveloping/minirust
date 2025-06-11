@@ -72,7 +72,8 @@ impl<'tcx> Ctxt<'tcx> {
             }
             rs::TyKind::Adt(adt_def, _) if adt_def.is_box() => {
                 let ty = ty.expect_boxed_ty();
-                todo!("TyKind::Adt is_box")
+                let offset = Size::from_bytes_const(4);
+                self.unsafe_cells_in_ty(ty, span).map(|(start, end)| (start + offset, end + offset))
             }
             rs::TyKind::Adt(adt_def, sref) if adt_def.is_struct() => {
                 let layout = self.rs_layout_of(ty);
