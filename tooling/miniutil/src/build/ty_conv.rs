@@ -78,7 +78,8 @@ impl<T: TypeConv + ?Sized> TypeConv for &T {
         ref_ty(PointeeInfo {
             layout: T::get_layout(),
             inhabited: true,
-            freeze: T::FREEZE,
+            // FIXME: Differentiate between Sized and Unsized
+            freeze: UnsafeCellStrategy::Sized { inside: List::new(), outside_is_freeze: T::FREEZE },
             unpin: T::UNPIN,
         })
     }
@@ -89,7 +90,8 @@ impl<T: TypeConv + ?Sized> TypeConv for &mut T {
         ref_mut_ty(PointeeInfo {
             layout: T::get_layout(),
             inhabited: true,
-            freeze: T::FREEZE,
+            // FIXME: Differentiate between Sized and Unsized
+            freeze: UnsafeCellStrategy::Sized { inside: List::new(), outside_is_freeze: T::FREEZE },
             unpin: T::UNPIN,
         })
     }
