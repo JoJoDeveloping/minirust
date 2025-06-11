@@ -84,7 +84,7 @@ pub struct NewPermission {
 impl<T: Target> TreeBorrowsMemory<T> {
     /// Create a new node for a pointer (reborrow)
     fn reborrow(
-        &mut self, 
+        &mut self,
         ptr: ThinPointer<TreeBorrowsProvenance>,
         pointee_size: Size,
         new_perm: NewPermission,
@@ -115,32 +115,25 @@ impl<T: Target> TreeBorrowsMemory<T> {
         };
         let protected = new_perm.protected;
 
-        
-        // println!("——————————————————————————————————");
         let child_path = self.mem.allocations.mutate_at(alloc_id.0, |allocation| {
-            // TODO: Construct this directly?
-            let mut location_states: List<LocationState> = List::new();
             let size = allocation.size();
 
-
-            if pointee_nonfreeze_bits.is_some() {
-                // TODO: Implement `Step` trait for `Size`?
-                for i in Int::ZERO..size.bytes() {
+            let location_states: List<LocationState> = if pointee_nonfreeze_bits.is_some() {
+                (Int::ZERO..size.bytes()).map(|i| {
                     let i = Size::from_bytes(i).unwrap();
                     // Check if `i` is included in any of the ranges. O(size * |pointee_nonfreeze_bits|)
                     // TODO: More performant way to do this?
                     let frozen = !pointee_nonfreeze_bits.unwrap().any(|(start, end)| start <= i && i < end);
                     let perm = if frozen { new_perm.freeze_perm } else { new_perm.nonfreeze_perm };
-                    location_states.push(LocationState {
+                    LocationState {
                         accessed: Accessed::No, // This gets updated to `Accessed::Yes` if `allocation.extra.root.access` runs
                         permission: perm
-                    });
-                }
-            }
-            // println!("{:?}", location_states);
-            // println!("{:?}", LocationState::new_list(if is_freeze {permission.freeze_perm} else {permission.nonfreeze_perm}, allocation.size()));
-            // println!("{:?}", pointee_size.bytes());
-            
+                    }
+                }).collect()
+            } else {
+                LocationState::new_list(new_perm.freeze_perm, size)
+            };
+
             // Create the new child node
             let child_node = Node {
                 children: List::new(),
@@ -163,7 +156,7 @@ impl<T: Target> TreeBorrowsMemory<T> {
         // Track the new protector
         if protected.yes() { frame_extra.protectors.push((alloc_id, child_path)); }
 
-        // Create the child pointer and return it 
+        // Create the child pointer and return it
         ret(ThinPointer {
             provenance: Some((alloc_id, child_path)),
             ..ptr
