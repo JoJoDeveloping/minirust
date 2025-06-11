@@ -18,7 +18,8 @@ pub fn ref_ty_default_markers_for(ty: Type) -> Type {
     ref_ty(PointeeInfo {
         layout: ty.layout::<DefaultTarget>(),
         inhabited: true,
-        freeze: true,
+        // FIXME: Differentiate between Sized and Unsized
+        freeze: UnsafeCellStrategy::Sized { inside: List::new(), outside_is_freeze: true },
         unpin: true,
     })
 }
@@ -33,7 +34,7 @@ pub fn ref_mut_ty_default_markers_for(ty: Type) -> Type {
     ref_mut_ty(PointeeInfo {
         layout: ty.layout::<DefaultTarget>(),
         inhabited: true,
-        freeze: true,
+        freeze: UnsafeCellStrategy::Sized { inside: List::new(), outside_is_freeze: true },
         unpin: true,
     })
 }

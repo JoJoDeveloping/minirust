@@ -1,5 +1,9 @@
 use crate::*;
 
+use std::slice;
+use rustc_index::IndexSlice;
+use rustc_middle::ty::VariantDef;
+
 impl<'tcx> Ctxt<'tcx> {
     pub fn pointee_info_of(&mut self, ty: rs::Ty<'tcx>, span: rs::Span) -> PointeeInfo {
         let layout = self.rs_layout_of(ty);
@@ -11,7 +15,8 @@ impl<'tcx> Ctxt<'tcx> {
             let size = translate_size(layout.size());
             let align = translate_align(layout.align().abi);
             let layout = LayoutStrategy::Sized(size, align);
-            return PointeeInfo { layout, inhabited, freeze, unpin };
+            let nonfreeze_bits = self.unsafe_cells_in_ty(ty, span);
+            return PointeeInfo { layout, inhabited, freeze: UnsafeCellStrategy::Sized { inside: nonfreeze_bits, outside_is_freeze: freeze }, unpin };
         }
 
         // Handle Unsized types:
@@ -21,16 +26,16 @@ impl<'tcx> Ctxt<'tcx> {
                 let size = translate_size(elem_layout.size());
                 let align = translate_align(elem_layout.align().abi);
                 let layout = LayoutStrategy::Slice(size, align);
-                PointeeInfo { layout, inhabited, freeze, unpin }
+                PointeeInfo { layout, inhabited, freeze: UnsafeCellStrategy::Unsized { is_freeze: freeze }, unpin }
             }
             &rs::TyKind::Str => {
                 // Treat `str` like `[u8]`.
                 let layout = LayoutStrategy::Slice(Size::from_bytes_const(1), Align::ONE);
-                PointeeInfo { layout, inhabited, freeze, unpin }
+                PointeeInfo { layout, inhabited, freeze: UnsafeCellStrategy::Unsized { is_freeze: freeze }, unpin }
             }
             &rs::TyKind::Dynamic(_, _, rs::DynKind::Dyn) => {
                 let layout = LayoutStrategy::TraitObject(self.get_trait_name(ty));
-                PointeeInfo { layout, inhabited, freeze, unpin }
+                PointeeInfo { layout, inhabited, freeze: UnsafeCellStrategy::Unsized { is_freeze: freeze }, unpin }
             }
             _ => rs::span_bug!(span, "encountered unimplemented unsized type: {ty}"),
         }
@@ -42,6 +47,104 @@ impl<'tcx> Ctxt<'tcx> {
 
     pub fn translate_ty_smir(&mut self, ty: smir::Ty, span: rs::Span) -> Type {
         self.translate_ty(smir::internal(self.tcx, ty), span)
+    }
+
+    pub fn unsafe_cells_in_ty(&mut self, ty: rs::Ty<'tcx>, span: rs::Span) -> List<(Offset, Offset)> {
+        match ty.kind() {
+            rs::TyKind::Bool => List::new(),
+            rs::TyKind::Int(_) => List::new(),
+            rs::TyKind::Uint(_) => List::new(),
+            rs::TyKind::RawPtr(..) => List::new(),
+            rs::TyKind::Ref(..) => List::new(),
+            rs::TyKind::FnPtr(..) => List::new(),
+            rs::TyKind::Never => List::new(),
+            rs::TyKind::Tuple(ts) => {
+                let layout = self.rs_layout_of(ty);
+                ts.iter().enumerate().flat_map(|(i, ty)| {
+                    let offset = translate_size(layout.fields().offset(i));
+                    self.unsafe_cells_in_ty(ty, span).map(|(start, end)| (start + offset, end + offset))
+                }).collect::<List<(Size, Size)>>()
+            }
+            rs::TyKind::Adt(adt_def, _) if adt_def.is_unsafe_cell() => {
+                let layout = self.rs_layout_of(ty);
+                let size = layout.size();
+                list![(Size::from_bytes_const(0), translate_size(size))]
+            }
+            rs::TyKind::Adt(adt_def, _) if adt_def.is_box() => {
+                let ty = ty.expect_boxed_ty();
+                todo!("TyKind::Adt is_box")
+            }
+            rs::TyKind::Adt(adt_def, sref) if adt_def.is_struct() => {
+                let layout = self.rs_layout_of(ty);
+                adt_def.non_enum_variant()
+                    .fields
+                    .iter_enumerated()
+                    .flat_map(|(i, field)| {
+                        let ty = field.ty(self.tcx, sref);
+                        let offset = layout.fields().offset(i.into());
+                        let offset = translate_size(offset);
+                        self.unsafe_cells_in_ty(ty, span).map(|(start, end)| (start + offset, end + offset))
+                    })
+                    .collect::<List<(Size, Size)>>()
+            }
+            rs::TyKind::Adt(adt_def, sref) if adt_def.is_union() || adt_def.is_enum() => {
+                let layout = self.rs_layout_of(ty);
+                let size = translate_size(layout.size());
+
+                // If any variant has an `UnsafeCell` somewhere in it, the whole range will be non-freeze.
+                let mut range_for_variants = |variants: &IndexSlice<rs::VariantIdx, VariantDef>| {
+                    let ranges: List<(Size, Size)> = variants.into_iter().flat_map(|variant| {
+                        variant.fields.iter().flat_map(|field| {
+                            let ty = field.ty(self.tcx, sref);
+                            self.unsafe_cells_in_ty(ty, span)
+                        }).collect::<List<(Size, Size)>>()
+                    }).collect();
+
+                    if !ranges.is_empty() {
+                        list!((Size::from_bytes_const(0), size))
+                    } else {
+                        List::new()
+                    }
+                };
+
+                if adt_def.is_union() {
+                    range_for_variants(IndexSlice::from_raw(slice::from_ref(adt_def.non_enum_variant())))
+                } else {
+                    match layout.variants() {
+                        rs::Variants::Empty => {
+                            todo!("TyKind::Adt is_enum Variants::Empty")
+                        },
+                        rs::Variants::Single { .. } => {
+                            range_for_variants(adt_def.variants())
+                        }
+                        rs::Variants::Multiple { .. } => {
+                            range_for_variants(adt_def.variants())
+                        }
+                    }
+                }
+            }
+            rs::TyKind::Array(elem_ty, c) => {
+                let range = self.unsafe_cells_in_ty(*elem_ty, span);
+                if !range.is_empty() {
+                    let layout = self.rs_layout_of(*elem_ty);
+                    let size = translate_size(layout.size());
+                    let count = Int::from(c.try_to_target_usize(self.tcx).unwrap());
+                    let ranges = List::from_elem(0, count);
+
+                    ranges.iter().enumerate().flat_map(|(i, _)| {
+                        let offset = size * i.into();
+                        range.map(|(start, end)| (start + offset, end + offset))
+                    }).collect()
+                } else {
+                    List::new()
+                }
+            },
+            rs::TyKind::Slice(ty) => { todo!("TyKind::Slice") },
+            rs::TyKind::Str => { todo!("TyKind::Str")},
+            rs::TyKind::Dynamic(_, _, rs::DynKind::Dyn) => { todo!("TyKind::Dynamic")},
+            x => rs::span_bug!(span, "TyKind not supported: {x:?}"),
+
+        }
     }
 
     pub fn translate_ty(&mut self, ty: rs::Ty<'tcx>, span: rs::Span) -> Type {
@@ -94,7 +197,7 @@ impl<'tcx> Ctxt<'tcx> {
             }
             rs::TyKind::Adt(adt_def, sref) if adt_def.is_enum() =>
                 self.translate_enum(ty, *adt_def, sref, span),
-            rs::TyKind::Ref(_, ty, mutbl) => {
+            rs::TyKind::Ref(region, ty, mutbl) => {
                 let pointee = self.pointee_info_of(*ty, span);
                 let mutbl = translate_mutbl(*mutbl);
                 Type::Ptr(PtrType::Ref { pointee, mutbl })
