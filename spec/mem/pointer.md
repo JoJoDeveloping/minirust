@@ -106,12 +106,29 @@ pub enum LayoutStrategy {
     },
 }
 
+pub enum UnsafeCellStrategy {
+    /// List of [start, end) ranges.
+    Sized { inside: List<(Offset, Offset)>, outside_is_freeze: bool },
+    Unsized { is_freeze: bool },
+}
+
+impl UnsafeCellStrategy {
+    pub fn is_freeze(self) -> bool {
+        match self {
+            Self::Sized { outside_is_freeze, .. } => outside_is_freeze,
+            Self::Unsized { is_freeze } => is_freeze,
+        }
+    }
+}
+
 /// Describes what we know about data behind a pointer.
 pub struct PointeeInfo {
     pub layout: LayoutStrategy,
     pub inhabited: bool,
-    pub freeze: bool,
+    pub freeze: UnsafeCellStrategy,
     pub unpin: bool,
+
+    // pub nonfreeze_bits: List<(Offset, Offset)>,
 }
 
 /// A "trait name" is an identifier for the trait a vtable is for.
