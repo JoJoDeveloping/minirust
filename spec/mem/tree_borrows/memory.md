@@ -101,12 +101,8 @@ impl<T: Target> TreeBorrowsMemory<T> {
             return ret(ptr);
         };
 
-        let (pointee_nonfreeze_bits, is_freeze) = {
-            let freeze = match ptr_type {
-                PtrType::Ref { mutbl, pointee: PointeeInfo { freeze, .. } } => Some(freeze),
-                PtrType::Box { pointee: PointeeInfo { freeze, .. } } => Some(freeze),
-                _ => None,
-            };
+        let (pointee_nonfreeze_bytes, is_freeze) = {
+            let freeze = ptr_type.safe_pointee().map(|pointee_info| pointee_info.freeze);
             match freeze {
                 Some(UnsafeCellStrategy::Sized { inside, outside_is_freeze }) => (Some(inside), outside_is_freeze),
                 Some(UnsafeCellStrategy::Unsized { is_freeze }) => (None, is_freeze),
@@ -118,12 +114,12 @@ impl<T: Target> TreeBorrowsMemory<T> {
         let child_path = self.mem.allocations.mutate_at(alloc_id.0, |allocation| {
             let size = allocation.size();
 
-            let location_states: List<LocationState> = if pointee_nonfreeze_bits.is_some() {
+            let location_states: List<LocationState> = if pointee_nonfreeze_bytes.is_some() {
                 (Int::ZERO..size.bytes()).map(|i| {
                     let i = Size::from_bytes(i).unwrap();
-                    // Check if `i` is included in any of the ranges. O(size * |pointee_nonfreeze_bits|)
+                    // Check if `i` is included in any of the ranges. O(size * |pointee_nonfreeze_bytes|)
                     // TODO: More performant way to do this?
-                    let frozen = !pointee_nonfreeze_bits.unwrap().any(|(start, end)| start <= i && i < end);
+                    let frozen = !pointee_nonfreeze_bytes.unwrap().any(|(start, end)| start <= i && i < end);
                     let perm = if frozen { new_perm.freeze_perm } else { new_perm.nonfreeze_perm };
                     LocationState {
                         accessed: Accessed::No, // This gets updated to `Accessed::Yes` if `allocation.extra.root.access` runs
@@ -144,7 +140,7 @@ impl<T: Target> TreeBorrowsMemory<T> {
             // Add the new node to the tree
             let child_path = allocation.extra.root.add_node(parent_path, child_node);
 
-            // If this is a non-zero-sized reborrow, perform read on the new child, updating all nodes accordingly.
+            // If this is a non-zero-sized reborrow, perform read on the new child if needed, updating all nodes accordingly.
             if pointee_size.bytes() > 0 && if is_freeze {new_perm.freeze_access} else {new_perm.nonfreeze_access} {
                 let offset = Offset::from_bytes(ptr.addr - allocation.addr).unwrap();
                 allocation.extra.root.access(Some(child_path), AccessKind::Read, offset, pointee_size)?;
