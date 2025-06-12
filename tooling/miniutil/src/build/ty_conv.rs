@@ -75,11 +75,16 @@ impl TypeConv for bool {
 
 impl<T: TypeConv + ?Sized> TypeConv for &T {
     fn get_type() -> Type {
+        let freeze = if T::get_layout().is_sized() {
+            UnsafeCellStrategy::Sized { inside: List::new(), outside_is_freeze: T::FREEZE }
+        } else {
+            UnsafeCellStrategy::Unsized { is_freeze: T::FREEZE }
+        };
+
         ref_ty(PointeeInfo {
             layout: T::get_layout(),
             inhabited: true,
-            // FIXME: Differentiate between Sized and Unsized
-            freeze: UnsafeCellStrategy::Sized { inside: List::new(), outside_is_freeze: T::FREEZE },
+            freeze,
             unpin: T::UNPIN,
         })
     }
@@ -87,11 +92,16 @@ impl<T: TypeConv + ?Sized> TypeConv for &T {
 
 impl<T: TypeConv + ?Sized> TypeConv for &mut T {
     fn get_type() -> Type {
+        let freeze = if T::get_layout().is_sized() {
+            UnsafeCellStrategy::Sized { inside: List::new(), outside_is_freeze: T::FREEZE }
+        } else {
+            UnsafeCellStrategy::Unsized { is_freeze: T::FREEZE }
+        };
+
         ref_mut_ty(PointeeInfo {
             layout: T::get_layout(),
             inhabited: true,
-            // FIXME: Differentiate between Sized and Unsized
-            freeze: UnsafeCellStrategy::Sized { inside: List::new(), outside_is_freeze: T::FREEZE },
+            freeze,
             unpin: T::UNPIN,
         })
     }
