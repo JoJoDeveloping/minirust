@@ -15,11 +15,17 @@ pub fn ref_ty(pointee: PointeeInfo) -> Type {
 /// Create a minirust reference type for a minirust type which implements default marker traits,
 /// i.e. the type is `Unpin`, `Freeze` and is inhabited.
 pub fn ref_ty_default_markers_for(ty: Type) -> Type {
+    let layout = ty.layout::<DefaultTarget>();
+    let freeze = if layout.is_sized() {
+        UnsafeCellStrategy::Sized { inside: List::new(), outside_is_freeze: true }
+    } else {
+        UnsafeCellStrategy::Unsized { is_freeze: true }
+    };
+
     ref_ty(PointeeInfo {
-        layout: ty.layout::<DefaultTarget>(),
+        layout,
         inhabited: true,
-        // FIXME: Differentiate between Sized and Unsized
-        freeze: UnsafeCellStrategy::Sized { inside: List::new(), outside_is_freeze: true },
+        freeze,
         unpin: true,
     })
 }
@@ -31,10 +37,17 @@ pub fn ref_mut_ty(pointee: PointeeInfo) -> Type {
 /// Create a mutable minirust reference type for a minirust type which implements default marker traits,
 /// i.e. the type is `Unpin`, `Freeze` and is inhabited.
 pub fn ref_mut_ty_default_markers_for(ty: Type) -> Type {
+    let layout = ty.layout::<DefaultTarget>();
+    let freeze = if layout.is_sized() {
+        UnsafeCellStrategy::Sized { inside: List::new(), outside_is_freeze: true }
+    } else {
+        UnsafeCellStrategy::Unsized { is_freeze: true }
+    };
+
     ref_mut_ty(PointeeInfo {
-        layout: ty.layout::<DefaultTarget>(),
+        layout,
         inhabited: true,
-        freeze: UnsafeCellStrategy::Sized { inside: List::new(), outside_is_freeze: true },
+        freeze,
         unpin: true,
     })
 }
