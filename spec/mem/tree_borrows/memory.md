@@ -185,29 +185,18 @@ impl<T: Target> TreeBorrowsMemory<T> {
     /// `None` indicates that no reborrow should happen.
     fn ptr_permissions(ptr_type: PtrType, fn_entry: bool) -> Option<(NewPermission, LayoutStrategy)> {
         match ptr_type {
-            PtrType::Ref { mutbl, pointee } if !pointee.freeze.is_freeze() && mutbl == Mutability::Immutable => {
-                // Shared reference to interior mutable type.
-                let protected = if fn_entry { Protected::Strong } else { Protected::No };
-                let permission = NewPermission {
-                    freeze_perm: Permission::Frozen,
-                    freeze_access: true,
-                    nonfreeze_perm: Permission::Cell,
-                    nonfreeze_access: false,
-                    protected,
-                };
-                Some((permission, pointee.layout))
-            },
             PtrType::Ref { mutbl, pointee } if !pointee.unpin && mutbl == Mutability::Mutable => {
                 // Mutable reference to pinning type: retagging is a NOP.
                 None
             },
             PtrType::Ref { mutbl, pointee } => {
                 let protected = if fn_entry { Protected::Strong } else { Protected::No };
+                let nonfreeze_access = !(!pointee.freeze.is_freeze() && mutbl == Mutability::Immutable);
                 let permission = NewPermission {
                     freeze_perm: Permission::default(mutbl, /* is_freeze */ true, protected),
                     freeze_access: true,
                     nonfreeze_perm: Permission::default(mutbl, /* is_freeze */ false, protected),
-                    nonfreeze_access: true,
+                    nonfreeze_access,
                     protected,
                 };
                 Some((permission, pointee.layout))
