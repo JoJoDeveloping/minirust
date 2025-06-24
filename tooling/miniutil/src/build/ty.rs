@@ -16,11 +16,7 @@ pub fn ref_ty(pointee: PointeeInfo) -> Type {
 /// i.e. the type is `Unpin`, `Freeze` and is inhabited.
 pub fn ref_ty_default_markers_for(ty: Type) -> Type {
     let layout = ty.layout::<DefaultTarget>();
-    let freeze = if layout.is_sized() {
-        UnsafeCellStrategy::Sized { inside: List::new(), outside_is_freeze: true }
-    } else {
-        UnsafeCellStrategy::Unsized { is_freeze: true }
-    };
+    let freeze = UnsafeCellStrategy::from_frozen_layout(layout);
 
     ref_ty(PointeeInfo {
         layout,
@@ -38,11 +34,7 @@ pub fn ref_mut_ty(pointee: PointeeInfo) -> Type {
 /// i.e. the type is `Unpin`, `Freeze` and is inhabited.
 pub fn ref_mut_ty_default_markers_for(ty: Type) -> Type {
     let layout = ty.layout::<DefaultTarget>();
-    let freeze = if layout.is_sized() {
-        UnsafeCellStrategy::Sized { inside: List::new(), outside_is_freeze: true }
-    } else {
-        UnsafeCellStrategy::Unsized { is_freeze: true }
-    };
+    let freeze = UnsafeCellStrategy::from_frozen_layout(layout);
 
     ref_mut_ty(PointeeInfo {
         layout,

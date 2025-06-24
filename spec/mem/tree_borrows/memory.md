@@ -101,14 +101,15 @@ impl<T: Target> TreeBorrowsMemory<T> {
             return ret(ptr);
         };
 
-        let (pointee_nonfreeze_bytes, is_freeze) = {
-            let freeze = ptr_type.safe_pointee().map(|pointee_info| pointee_info.freeze);
-            match freeze {
-                Some(UnsafeCellStrategy::Sized { inside, outside_is_freeze }) => (Some(inside), outside_is_freeze),
-                Some(UnsafeCellStrategy::Unsized { is_freeze }) => (None, is_freeze),
-                None => (None, true),
+        let freeze_info = ptr_type.safe_pointee().map(|pointee_info| pointee_info.freeze);
+        let pointee_nonfreeze_bytes = freeze_info.map(|strategy| {
+            match strategy {
+                UnsafeCellStrategy::Sized { bytes } => bytes,
+                // TODO: Implement for unsized cases
+                _ => List::new(),
             }
-        };
+        });
+        let is_freeze = freeze_info.map_or(true, |strategy| strategy.is_freeze());
         let protected = new_perm.protected;
 
         let child_path = self.mem.allocations.mutate_at(alloc_id.0, |allocation| {

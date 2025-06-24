@@ -106,17 +106,37 @@ pub enum LayoutStrategy {
     },
 }
 
+/// Corresponds to the variants of `LayoutStrategy`
 pub enum UnsafeCellStrategy {
     /// List of [start, end) ranges.
-    Sized { inside: List<(Offset, Offset)>, outside_is_freeze: bool },
-    Unsized { is_freeze: bool },
+    Sized { bytes: List<(Offset, Offset)> },
+    /// Since the elements of a slice have the same type, we only keep track of the
+    /// UnsafeCell's of one element, we can then "repeat" this for the rest of the slice.
+    Slice { element: List<(Offset, Offset)> },
+    TraitObject { is_freeze: bool },
+    Tuple {
+        head: List<(Offset, Offset)>,
+        #[specr::indirection]
+        tail: UnsafeCellStrategy,
+    },
 }
 
 impl UnsafeCellStrategy {
     pub fn is_freeze(self) -> bool {
         match self {
-            Self::Sized { outside_is_freeze, .. } => outside_is_freeze,
-            Self::Unsized { is_freeze } => is_freeze,
+            Self::Sized { bytes } => bytes.is_empty(),
+            Self::Slice { element } => element.is_empty(),
+            Self::TraitObject { is_freeze } => is_freeze,
+            Self::Tuple { head, tail } => head.is_empty() && tail.is_freeze(),
+        }
+    }
+
+    pub fn from_frozen_layout(layout: LayoutStrategy) -> Self {
+        match layout {
+            LayoutStrategy::Sized(..) => Self::Sized { bytes: List::new() },
+            LayoutStrategy::Slice(..) => Self::Slice { element: List::new() },
+            LayoutStrategy::TraitObject(..) => Self::TraitObject { is_freeze: true },
+            LayoutStrategy::Tuple { tail, .. } => Self::Tuple { head: List::new(), tail: Self::from_frozen_layout(tail) },
         }
     }
 }
@@ -127,8 +147,6 @@ pub struct PointeeInfo {
     pub inhabited: bool,
     pub freeze: UnsafeCellStrategy,
     pub unpin: bool,
-
-    // pub nonfreeze_bits: List<(Offset, Offset)>,
 }
 
 /// A "trait name" is an identifier for the trait a vtable is for.
