@@ -12,26 +12,27 @@ impl<'tcx> Ctxt<'tcx> {
             let align = translate_align(layout.align().abi);
             let layout = LayoutStrategy::Sized(size, align);
             let nonfreeze_bytes = self.nonfreeze_bytes_in_sized_ty(ty, span);
-            return PointeeInfo { layout, inhabited, freeze: UnsafeCellStrategy::Sized { inside: nonfreeze_bytes, outside_is_freeze: freeze }, unpin };
+            return PointeeInfo { layout, inhabited, freeze: UnsafeCellStrategy::Sized { bytes: nonfreeze_bytes }, unpin };
         }
 
         // Handle Unsized types:
         match ty.kind() {
             &rs::TyKind::Slice(elem_ty) => {
                 let elem_layout = self.rs_layout_of(elem_ty);
+                let elem_nonfreeze_bytes = self.nonfreeze_bytes_in_sized_ty(elem_ty, span);
                 let size = translate_size(elem_layout.size());
                 let align = translate_align(elem_layout.align().abi);
                 let layout = LayoutStrategy::Slice(size, align);
-                PointeeInfo { layout, inhabited, freeze: UnsafeCellStrategy::Unsized { is_freeze: freeze }, unpin }
+                PointeeInfo { layout, inhabited, freeze: UnsafeCellStrategy::Slice { element: elem_nonfreeze_bytes }, unpin }
             }
             &rs::TyKind::Str => {
                 // Treat `str` like `[u8]`.
                 let layout = LayoutStrategy::Slice(Size::from_bytes_const(1), Align::ONE);
-                PointeeInfo { layout, inhabited, freeze: UnsafeCellStrategy::Unsized { is_freeze: freeze }, unpin }
+                PointeeInfo { layout, inhabited, freeze: UnsafeCellStrategy::Slice { element: List::new() }, unpin }
             }
             &rs::TyKind::Dynamic(_, _, rs::DynKind::Dyn) => {
                 let layout = LayoutStrategy::TraitObject(self.get_trait_name(ty));
-                PointeeInfo { layout, inhabited, freeze: UnsafeCellStrategy::Unsized { is_freeze: freeze }, unpin }
+                PointeeInfo { layout, inhabited, freeze: UnsafeCellStrategy::TraitObject { is_freeze: freeze }, unpin }
             }
             _ => rs::span_bug!(span, "encountered unimplemented unsized type: {ty}"),
         }
