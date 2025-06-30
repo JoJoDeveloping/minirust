@@ -81,6 +81,23 @@ pub struct NewPermission {
 }
 
 
+fn visit_freeze_sensitive(nonfreeze_bytes: List<(Offset, Offset)>, size: Size, mut action: impl FnMut((Offset, Offset), bool) -> ()) {
+    // println!("{:?}", nonfreeze_bytes);
+    let mut padded_front = nonfreeze_bytes;
+    let mut padded_back = nonfreeze_bytes;
+
+    padded_front.push_front((Size::from_bytes_const(0), Size::from_bytes_const(0)));
+    padded_back.push((size, size));
+
+    for (current, next) in padded_front.zip(padded_back) {
+        // Skip ranges that are (0,0)?
+        let nonfreeze_range = current;
+        let freeze_range = (current.1, next.0);
+        action(nonfreeze_range, false);
+        action(freeze_range, true);
+    }
+}
+
 impl<T: Target> TreeBorrowsMemory<T> {
     /// Create a new node for a pointer (reborrow)
     fn reborrow(
@@ -102,34 +119,24 @@ impl<T: Target> TreeBorrowsMemory<T> {
         };
 
         let freeze_info = ptr_type.safe_pointee().map(|pointee_info| pointee_info.freeze);
-        let pointee_nonfreeze_bytes = freeze_info.map(|strategy| {
-            match strategy {
-                UnsafeCellStrategy::Sized { bytes } => bytes,
-                // TODO: Implement for unsized cases
-                _ => List::new(),
-            }
-        });
-        let is_freeze = freeze_info.map_or(true, |strategy| strategy.is_freeze());
+        let pointee_nonfreeze_bytes = freeze_info.map(|strategy| strategy.nonfreeze_bytes());
         let protected = new_perm.protected;
 
         let child_path = self.mem.allocations.mutate_at(alloc_id.0, |allocation| {
             let size = allocation.size();
 
-            let location_states: List<LocationState> = if pointee_nonfreeze_bytes.is_some() {
-                (Int::ZERO..size.bytes()).map(|i| {
-                    let i = Size::from_bytes(i).unwrap();
-                    // Check if `i` is included in any of the ranges. O(size * |pointee_nonfreeze_bytes|)
-                    // TODO: More performant way to do this?
-                    let frozen = !pointee_nonfreeze_bytes.unwrap().any(|(start, end)| start <= i && i < end);
-                    let perm = if frozen { new_perm.freeze_perm } else { new_perm.nonfreeze_perm };
-                    LocationState {
-                        accessed: Accessed::No, // This gets updated to `Accessed::Yes` if `allocation.extra.root.access` runs
-                        permission: perm
+            let mut location_states = LocationState::new_list(new_perm.freeze_perm, size);
+            if pointee_nonfreeze_bytes.is_some() {
+                visit_freeze_sensitive(pointee_nonfreeze_bytes.unwrap(), size, |(start, end), frozen| {
+                    let permission = if frozen { new_perm.freeze_perm } else { new_perm.nonfreeze_perm };
+                    for i in start.bytes()..end.bytes() {
+                        location_states.set(i, LocationState {
+                            accessed: Accessed::No,
+                            permission,
+                        })
                     }
-                }).collect()
-            } else {
-                LocationState::new_list(new_perm.freeze_perm, size)
-            };
+                });
+            }
 
             // Create the new child node
             let child_node = Node {
@@ -142,9 +149,17 @@ impl<T: Target> TreeBorrowsMemory<T> {
             let child_path = allocation.extra.root.add_node(parent_path, child_node);
 
             // If this is a non-zero-sized reborrow, perform read on the new child if needed, updating all nodes accordingly.
-            if pointee_size.bytes() > 0 && if is_freeze {new_perm.freeze_access} else {new_perm.nonfreeze_access} {
-                let offset = Offset::from_bytes(ptr.addr - allocation.addr).unwrap();
-                allocation.extra.root.access(Some(child_path), AccessKind::Read, offset, pointee_size)?;
+            if pointee_size.bytes() > 0 {
+                let offset = ptr.addr - allocation.addr;
+                visit_freeze_sensitive(pointee_nonfreeze_bytes.unwrap(), pointee_size, |(start, end), frozen| {
+                    let initial_access = if frozen { new_perm.freeze_access } else { new_perm.nonfreeze_access };
+
+                    if initial_access {
+                        for _ in start.bytes().max(offset)..end.bytes() {
+                        let _ = allocation.extra.root.access(Some(child_path), AccessKind::Read, Offset::from_bytes(offset).unwrap(), Offset::from_bytes_const(1));
+                        }
+                    }
+                });
             }
 
             ret::<Result<Path>>(child_path)
@@ -192,6 +207,8 @@ impl<T: Target> TreeBorrowsMemory<T> {
             },
             PtrType::Ref { mutbl, pointee } => {
                 let protected = if fn_entry { Protected::Strong } else { Protected::No };
+                // We don't want to perform a read access on the non-frozen part if we have a shared reference,
+                // i.e. when we have a Cell permission.
                 let nonfreeze_access = !(!pointee.freeze.is_freeze() && mutbl == Mutability::Immutable);
                 let permission = NewPermission {
                     freeze_perm: Permission::default(mutbl, /* is_freeze */ true, protected),

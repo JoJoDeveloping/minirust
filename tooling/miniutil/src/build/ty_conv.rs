@@ -73,6 +73,7 @@ impl TypeConv for bool {
     }
 }
 
+// Add Freeze constraint as we don't know which bytes are non-freeze.
 impl<T: TypeConv + ?Sized + Freeze> TypeConv for &T {
     fn get_type() -> Type {
         let layout = T::get_layout();
