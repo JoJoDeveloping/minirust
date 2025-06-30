@@ -106,6 +106,8 @@ pub enum LayoutStrategy {
     },
 }
 
+// pub type Range = (Offset, Offset);??
+
 /// Corresponds to the variants of `LayoutStrategy`
 pub enum UnsafeCellStrategy {
     /// List of [start, end) ranges.
@@ -122,6 +124,7 @@ pub enum UnsafeCellStrategy {
 }
 
 impl UnsafeCellStrategy {
+    /// Tell us whether the range outside of a retag is freeze.
     pub fn is_freeze(self) -> bool {
         match self {
             Self::Sized { bytes } => bytes.is_empty(),
@@ -137,6 +140,14 @@ impl UnsafeCellStrategy {
             LayoutStrategy::Slice(..) => Self::Slice { element: List::new() },
             LayoutStrategy::TraitObject(..) => Self::TraitObject { is_freeze: true },
             LayoutStrategy::Tuple { tail, .. } => Self::Tuple { head: List::new(), tail: Self::from_frozen_layout(tail) },
+        }
+    }
+
+    pub fn nonfreeze_bytes(self) -> List<(Offset, Offset)> {
+        match self {
+            Self::Sized { bytes } => bytes,
+            // TODO: Implement for unsized cases
+            _ => List::new(),
         }
     }
 }
