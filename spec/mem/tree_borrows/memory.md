@@ -89,14 +89,11 @@ fn visit_freeze_sensitive(nonfreeze_bytes: List<(Offset, Offset)>, start: Offset
     padded_back.push((size, size));
 
     for (current, next) in padded_front.zip(padded_back) {
-        let nonfreeze_start = start.bytes().max(current.0.bytes());
-        let freeze_start = start.bytes().max(current.1.bytes());
-
-        for offset in nonfreeze_start..current.1.bytes() {
-            f(Offset::from_bytes(offset).unwrap(), false);
+        for offset in current.0.bytes()..current.1.bytes() {
+            f(Offset::from_bytes(offset + start.bytes()).unwrap(), false);
         }
-        for offset in freeze_start..next.0.bytes() {
-            f(Offset::from_bytes(offset).unwrap(), true);
+        for offset in current.1.bytes()..next.0.bytes() {
+            f(Offset::from_bytes(offset + start.bytes()).unwrap(), true);
         }
     }
 }
