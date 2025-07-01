@@ -81,8 +81,7 @@ pub struct NewPermission {
 }
 
 
-fn visit_freeze_sensitive(nonfreeze_bytes: List<(Offset, Offset)>, size: Size, mut action: impl FnMut((Offset, Offset), bool) -> ()) {
-    // println!("{:?}", nonfreeze_bytes);
+fn visit_freeze_sensitive(nonfreeze_bytes: List<(Offset, Offset)>, start: Offset, size: Size, mut f: impl FnMut(Offset, bool) -> ()) {
     let mut padded_front = nonfreeze_bytes;
     let mut padded_back = nonfreeze_bytes;
 
@@ -90,11 +89,15 @@ fn visit_freeze_sensitive(nonfreeze_bytes: List<(Offset, Offset)>, size: Size, m
     padded_back.push((size, size));
 
     for (current, next) in padded_front.zip(padded_back) {
-        // Skip ranges that are (0,0)?
-        let nonfreeze_range = current;
-        let freeze_range = (current.1, next.0);
-        action(nonfreeze_range, false);
-        action(freeze_range, true);
+        let nonfreeze_start = start.bytes().max(current.0.bytes());
+        let freeze_start = start.bytes().max(current.1.bytes());
+
+        for offset in nonfreeze_start..current.1.bytes() {
+            f(Offset::from_bytes(offset).unwrap(), false);
+        }
+        for offset in freeze_start..next.0.bytes() {
+            f(Offset::from_bytes(offset).unwrap(), true);
+        }
     }
 }
 
@@ -118,25 +121,26 @@ impl<T: Target> TreeBorrowsMemory<T> {
             return ret(ptr);
         };
 
-        let freeze_info = ptr_type.safe_pointee().map(|pointee_info| pointee_info.freeze);
-        let pointee_nonfreeze_bytes = freeze_info.map(|strategy| strategy.nonfreeze_bytes());
+        let pointee_nonfreeze_bytes = match ptr_type.safe_pointee() {
+            Some(pointee_info) => pointee_info.freeze.nonfreeze_bytes(),
+            None => panic!("'reborrow' should only be called with data pointers (PtrType::Ref or PtrType::Box)."),
+        };
+
         let protected = new_perm.protected;
 
         let child_path = self.mem.allocations.mutate_at(alloc_id.0, |allocation| {
             let size = allocation.size();
+            let offset = Offset::from_bytes(ptr.addr - allocation.addr).unwrap();
 
+            // Compute permissions
             let mut location_states = LocationState::new_list(new_perm.freeze_perm, size);
-            if pointee_nonfreeze_bytes.is_some() {
-                visit_freeze_sensitive(pointee_nonfreeze_bytes.unwrap(), size, |(start, end), frozen| {
+                visit_freeze_sensitive(pointee_nonfreeze_bytes, offset, pointee_size, |offset, frozen| {
                     let permission = if frozen { new_perm.freeze_perm } else { new_perm.nonfreeze_perm };
-                    for i in start.bytes()..end.bytes() {
-                        location_states.set(i, LocationState {
-                            accessed: Accessed::No,
-                            permission,
-                        })
-                    }
+                    location_states.set(offset.bytes(), LocationState {
+                        accessed: Accessed::No,
+                        permission,
+                    })
                 });
-            }
 
             // Create the new child node
             let child_node = Node {
@@ -150,14 +154,11 @@ impl<T: Target> TreeBorrowsMemory<T> {
 
             // If this is a non-zero-sized reborrow, perform read on the new child if needed, updating all nodes accordingly.
             if pointee_size.bytes() > 0 {
-                let offset = ptr.addr - allocation.addr;
-                visit_freeze_sensitive(pointee_nonfreeze_bytes.unwrap(), pointee_size, |(start, end), frozen| {
+                visit_freeze_sensitive(pointee_nonfreeze_bytes, offset, pointee_size, |offset, frozen| {
                     let initial_access = if frozen { new_perm.freeze_access } else { new_perm.nonfreeze_access };
 
                     if initial_access {
-                        for _ in start.bytes().max(offset)..end.bytes() {
-                        let _ = allocation.extra.root.access(Some(child_path), AccessKind::Read, Offset::from_bytes(offset).unwrap(), Offset::from_bytes_const(1));
-                        }
+                        let _ = allocation.extra.root.access(Some(child_path), AccessKind::Read, offset, Offset::from_bytes_const(1));
                     }
                 });
             }
