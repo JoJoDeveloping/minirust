@@ -11,7 +11,8 @@ impl<'tcx> Ctxt<'tcx> {
             let size = translate_size(layout.size());
             let align = translate_align(layout.align().abi);
             let layout = LayoutStrategy::Sized(size, align);
-            let nonfreeze_bytes = self.nonfreeze_bytes_in_sized_ty(ty, span);
+            // The ranges are sorted in descending order, but we want them to be in ascending order.
+            let nonfreeze_bytes = self.nonfreeze_bytes_in_sized_ty(ty, span).iter().rev().collect();
             return PointeeInfo { layout, inhabited, freeze: UnsafeCellStrategy::Sized { bytes: nonfreeze_bytes }, unpin };
         }
 
@@ -19,7 +20,7 @@ impl<'tcx> Ctxt<'tcx> {
         match ty.kind() {
             &rs::TyKind::Slice(elem_ty) => {
                 let elem_layout = self.rs_layout_of(elem_ty);
-                let elem_nonfreeze_bytes = self.nonfreeze_bytes_in_sized_ty(elem_ty, span);
+                let elem_nonfreeze_bytes = self.nonfreeze_bytes_in_sized_ty(elem_ty, span).iter().rev().collect();
                 let size = translate_size(elem_layout.size());
                 let align = translate_align(elem_layout.align().abi);
                 let layout = LayoutStrategy::Slice(size, align);

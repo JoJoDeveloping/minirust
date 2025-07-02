@@ -84,6 +84,7 @@ pub struct NewPermission {
 /// Call f(start + 0, is_frozen_0), f(start + 1, is_frozen_1), ..., f(start + size - 1, is_frozen_size-1)
 /// where is_frozen_i is true if the i-th byte in the range does not contain an UnsafeCell.
 fn visit_freeze_sensitive(nonfreeze_bytes: List<(Offset, Offset)>, start: Offset, size: Size, mut f: impl FnMut(Offset, bool) -> Result) -> Result {
+    assert!(nonfreeze_bytes.iter().is_sorted_by(|a, b| a.0 <= b.0));
 
     let padded_front = std::iter::once((Size::ZERO, Size::ZERO)).chain(nonfreeze_bytes.iter());
     let padded_back = nonfreeze_bytes.iter().chain(std::iter::once((size, size)));
