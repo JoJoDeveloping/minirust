@@ -9,11 +9,10 @@ struct Foo {
 
 pub fn main() {
     let root = Foo { field1: 42, field2: Cell::new(88) };
-    // let root = (42, Cell::new(88));
+
     unsafe {
         let a = &root;
         let a: *mut Foo = a as *const _ as *mut _;
-        // let a: *mut (i32, Cell<i32>) = a as *const _ as *mut _;
 
         // Writing to `field2`, which is interior mutable, should be allowed.
         (*a).field2.set(10);
