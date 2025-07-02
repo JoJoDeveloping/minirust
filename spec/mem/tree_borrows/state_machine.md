@@ -57,8 +57,8 @@ impl Permission {
             Mutability::Mutable if !is_freeze && protected.no() => Permission::ReservedIm,
             Mutability::Mutable => Permission::Reserved { conflicted: false },
             Mutability::Immutable if !is_freeze => Permission::Cell,
-            Mutability::Immutable if is_freeze => Permission::Frozen,
-            Mutability::Immutable => panic!("Permission::default: interior-mutable shared reference")
+            // if is_freeze
+            Mutability::Immutable => Permission::Frozen,
         }
     }
 
@@ -161,7 +161,7 @@ impl LocationState {
                 Permission::Unique => throw_ub!("Tree Borrows: a protected pointer with Unique permission becomes Disabled"),
                 Permission::Frozen => throw_ub!("Tree Borrows: a protected pointer with Frozen permission becomes Disabled"),
                 Permission::Reserved { .. } => throw_ub!("Tree Borrows: a protected pointer with Reserved permission becomes Disabled"),
-                Permission::Cell => throw_ub!("Tree Borrows: a protected pointer with Cell permission becomes Disabled"),
+                Permission::Cell => panic!("Impossible state combination: Cell became Disabled"),
             }
         }
 

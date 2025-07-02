@@ -81,21 +81,22 @@ pub struct NewPermission {
 }
 
 
-fn visit_freeze_sensitive(nonfreeze_bytes: List<(Offset, Offset)>, start: Offset, size: Size, mut f: impl FnMut(Offset, bool) -> ()) {
-    let mut padded_front = nonfreeze_bytes;
-    let mut padded_back = nonfreeze_bytes;
+/// Call f(start + 0, is_frozen_0), f(start + 1, is_frozen_1), ..., f(start + size - 1, is_frozen_size-1)
+/// where is_frozen_i is true if the i-th byte in the range does not contain an UnsafeCell.
+fn visit_freeze_sensitive(nonfreeze_bytes: List<(Offset, Offset)>, start: Offset, size: Size, mut f: impl FnMut(Offset, bool) -> Result) -> Result {
 
-    padded_front.push_front((Size::from_bytes_const(0), Size::from_bytes_const(0)));
-    padded_back.push((size, size));
+    let padded_front = std::iter::once((Size::ZERO, Size::ZERO)).chain(nonfreeze_bytes.iter());
+    let padded_back = nonfreeze_bytes.iter().chain(std::iter::once((size, size)));
 
     for (current, next) in padded_front.zip(padded_back) {
         for offset in current.0.bytes()..current.1.bytes() {
-            f(Offset::from_bytes(offset + start.bytes()).unwrap(), false);
+            f(Offset::from_bytes(offset).unwrap() + start, false)?
         }
         for offset in current.1.bytes()..next.0.bytes() {
-            f(Offset::from_bytes(offset + start.bytes()).unwrap(), true);
+            f(Offset::from_bytes(offset).unwrap() + start, true)?
         }
     }
+    Ok(())
 }
 
 impl<T: Target> TreeBorrowsMemory<T> {
@@ -131,13 +132,14 @@ impl<T: Target> TreeBorrowsMemory<T> {
 
             // Compute permissions
             let mut location_states = LocationState::new_list(new_perm.freeze_perm, size);
-                visit_freeze_sensitive(pointee_nonfreeze_bytes, offset, pointee_size, |offset, frozen| {
-                    let permission = if frozen { new_perm.freeze_perm } else { new_perm.nonfreeze_perm };
-                    location_states.set(offset.bytes(), LocationState {
-                        accessed: Accessed::No,
-                        permission,
-                    })
+            visit_freeze_sensitive(pointee_nonfreeze_bytes, offset, pointee_size, |offset, frozen| {
+                let permission = if frozen { new_perm.freeze_perm } else { new_perm.nonfreeze_perm };
+                location_states.set(offset.bytes(), LocationState {
+                    accessed: Accessed::No,
+                    permission,
                 });
+                Ok(())
+            })?;
 
             // Create the new child node
             let child_node = Node {
@@ -155,9 +157,10 @@ impl<T: Target> TreeBorrowsMemory<T> {
                     let initial_access = if frozen { new_perm.freeze_access } else { new_perm.nonfreeze_access };
 
                     if initial_access {
-                        let _ = allocation.extra.root.access(Some(child_path), AccessKind::Read, offset, Offset::from_bytes_const(1));
+                        allocation.extra.root.access(Some(child_path), AccessKind::Read, offset, Offset::from_bytes_const(1))?
                     }
-                });
+                    Ok(())
+                })?
             }
 
             ret::<Result<Path>>(child_path)
@@ -207,7 +210,7 @@ impl<T: Target> TreeBorrowsMemory<T> {
                 let protected = if fn_entry { Protected::Strong } else { Protected::No };
                 // We don't want to perform a read access on the non-frozen part if we have a shared reference,
                 // i.e. when we have a Cell permission.
-                let nonfreeze_access = !(!pointee.freeze.is_freeze() && mutbl == Mutability::Immutable);
+                let nonfreeze_access = mutbl != Mutability::Immutable;
                 let permission = NewPermission {
                     freeze_perm: Permission::default(mutbl, /* is_freeze */ true, protected),
                     freeze_access: true,
