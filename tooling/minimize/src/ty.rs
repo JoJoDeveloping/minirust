@@ -164,7 +164,7 @@ impl<'tcx> Ctxt<'tcx> {
             }
             rs::TyKind::Adt(adt_def, sref) if adt_def.is_enum() =>
                 self.translate_enum(ty, *adt_def, sref, span),
-            rs::TyKind::Ref(_region, ty, mutbl) => {
+            rs::TyKind::Ref(_, ty, mutbl) => {
                 let pointee = self.pointee_info_of(*ty, span);
                 let mutbl = translate_mutbl(*mutbl);
                 Type::Ptr(PtrType::Ref { pointee, mutbl })
