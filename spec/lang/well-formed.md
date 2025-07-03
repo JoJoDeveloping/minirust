@@ -74,7 +74,7 @@ impl LayoutStrategy {
 }
 
 impl UnsafeCellStrategy {
-    fn check_wf<T: Target>(self, prog: Program) -> Result<()> {
+    fn check_wf<T: Target>(self, layout: LayoutStrategy) -> Result<()> {
         // Ensure that the list containing ranges of non-frozen bytes is sorted
         // in ascending order and don't contain overlapping ranges.
         let is_sorted = |list: List<(Offset, Offset)>| { list.iter().is_sorted_by(|a, b| a.0 <= b.0) };
@@ -88,21 +88,28 @@ impl UnsafeCellStrategy {
                 }
             }).1
         };
+        let greatest_end = |list: List<(Offset, Offset)>| list.last().map(|(_start, end)| end).unwrap_or(Size::ZERO);
 
-        match self {
-            UnsafeCellStrategy::Sized { bytes } => {
+        match (self, layout) {
+            (UnsafeCellStrategy::Sized { bytes }, LayoutStrategy::Sized(size, _)) => {
                 ensure_wf(is_sorted(bytes), "UnsafeCellStrategy::Sized: non-frozen byte ranges not sorted")?;
                 ensure_wf(!has_overlap(bytes), "UnsafeCellStrategy::Sized: non-frozen byte ranges have overlap")?;
+                ensure_wf(greatest_end(bytes) <= size, "UnsafeCellStrategy::Tuple non-frozen byte range goes beyond type size")?;
             },
-            UnsafeCellStrategy::Slice { element } => {
+            (UnsafeCellStrategy::Slice { element }, LayoutStrategy::Slice(size, _)) => {
                 ensure_wf(is_sorted(element), "UnsafeCellStrategy::Slice: non-frozen byte ranges not sorted")?;
                 ensure_wf(!has_overlap(element), "UnsafeCellStrategy::Slice: non-frozen byte ranges have overlap")?;
+                ensure_wf(greatest_end(element) <= size, "UnsafeCellStrategy::Tuple non-frozen byte range goes beyond type size")?;
             },
-            UnsafeCellStrategy::TraitObject { .. } => (),
-            UnsafeCellStrategy::Tuple { head, tail } => {
+            (UnsafeCellStrategy::TraitObject { .. }, LayoutStrategy::TraitObject(..)) => (),
+            (UnsafeCellStrategy::Tuple { head, tail }, LayoutStrategy::Tuple { head: TupleHeadLayout { end, .. }, tail: layout_tail }) => {
                 ensure_wf(is_sorted(head), "UnsafeCellStrategy::Tuple: non-frozen byte ranges not sorted")?;
                 ensure_wf(!has_overlap(head), "UnsafeCellStrategy::Tuple: non-frozen byte ranges have overlap")?;
-                tail.check_wf::<T>(prog)?;
+                ensure_wf(greatest_end(head) <= end, "UnsafeCellStrategy::Tuple non-frozen byte range goes beyond type size")?;
+                tail.check_wf::<T>(layout_tail)?;
+            },
+            _ => {
+                ensure_wf(false, "UnsafeCellStrategy and LayoutStrategy do variants do not match")?;
             },
         };
 
@@ -113,7 +120,7 @@ impl PointeeInfo {
     fn check_wf<T: Target>(self, prog: Program) -> Result<()> {
         // We do *not* require that size is a multiple of align!
         self.layout.check_wf::<T>(prog)?;
-        self.freeze.check_wf::<T>(prog)?;
+        self.freeze.check_wf::<T>(self.layout)?;
 
         ret(())
     }
