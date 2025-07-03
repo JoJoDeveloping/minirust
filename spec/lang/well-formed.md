@@ -94,12 +94,12 @@ impl UnsafeCellStrategy {
             (UnsafeCellStrategy::Sized { bytes }, LayoutStrategy::Sized(size, _)) => {
                 ensure_wf(is_sorted(bytes), "UnsafeCellStrategy::Sized: non-frozen byte ranges not sorted")?;
                 ensure_wf(!has_overlap(bytes), "UnsafeCellStrategy::Sized: non-frozen byte ranges have overlap")?;
-                ensure_wf(greatest_end(bytes) <= size, "UnsafeCellStrategy::Tuple non-frozen byte range goes beyond type size")?;
+                ensure_wf(greatest_end(bytes) <= size, "UnsafeCellStrategy::Sized non-frozen byte range goes beyond type size")?;
             },
             (UnsafeCellStrategy::Slice { element }, LayoutStrategy::Slice(size, _)) => {
                 ensure_wf(is_sorted(element), "UnsafeCellStrategy::Slice: non-frozen byte ranges not sorted")?;
                 ensure_wf(!has_overlap(element), "UnsafeCellStrategy::Slice: non-frozen byte ranges have overlap")?;
-                ensure_wf(greatest_end(element) <= size, "UnsafeCellStrategy::Tuple non-frozen byte range goes beyond type size")?;
+                ensure_wf(greatest_end(element) <= size, "UnsafeCellStrategy::Slice non-frozen byte range goes beyond type size")?;
             },
             (UnsafeCellStrategy::TraitObject { .. }, LayoutStrategy::TraitObject(..)) => (),
             (UnsafeCellStrategy::Tuple { head, tail }, LayoutStrategy::Tuple { head: TupleHeadLayout { end, .. }, tail: layout_tail }) => {
@@ -109,7 +109,7 @@ impl UnsafeCellStrategy {
                 tail.check_wf::<T>(layout_tail)?;
             },
             _ => {
-                ensure_wf(false, "UnsafeCellStrategy and LayoutStrategy do variants do not match")?;
+                ensure_wf(false, "UnsafeCellStrategy and LayoutStrategy variants do not match")?;
             },
         };
 
