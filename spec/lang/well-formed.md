@@ -73,10 +73,47 @@ impl LayoutStrategy {
     }
 }
 
+impl UnsafeCellStrategy {
+    fn check_wf<T: Target>(self, prog: Program) -> Result<()> {
+        // Ensure that the list containing ranges of non-frozen bytes is sorted
+        // in ascending order and don't contain overlapping ranges.
+        let is_sorted = |list: List<(Offset, Offset)>| { list.iter().is_sorted_by(|a, b| a.0 <= b.0) };
+        let has_overlap = |list: List<(Offset, Offset)> | {
+            let first = list.first().map(|(start, _end)| start).unwrap_or(Size::ZERO);
+            list.iter().fold((first, false), |acc, (start, end)| {
+                if acc.1 || acc.0 > start{
+                    (end, true)
+                } else {
+                    (end, false)
+                }
+            }).1
+        };
+
+        match self {
+            UnsafeCellStrategy::Sized { bytes } => {
+                ensure_wf(is_sorted(bytes), "UnsafeCellStrategy::Sized: non-frozen byte ranges not sorted")?;
+                ensure_wf(!has_overlap(bytes), "UnsafeCellStrategy::Sized: non-frozen byte ranges have overlap")?;
+            },
+            UnsafeCellStrategy::Slice { element } => {
+                ensure_wf(is_sorted(element), "UnsafeCellStrategy::Slice: non-frozen byte ranges not sorted")?;
+                ensure_wf(!has_overlap(element), "UnsafeCellStrategy::Slice: non-frozen byte ranges have overlap")?;
+            },
+            UnsafeCellStrategy::TraitObject { .. } => (),
+            UnsafeCellStrategy::Tuple { head, tail } => {
+                ensure_wf(is_sorted(head), "UnsafeCellStrategy::Tuple: non-frozen byte ranges not sorted")?;
+                ensure_wf(!has_overlap(head), "UnsafeCellStrategy::Tuple: non-frozen byte ranges have overlap")?;
+                tail.check_wf::<T>(prog)?;
+            },
+        };
+
+        ret(())
+    }
+}
 impl PointeeInfo {
     fn check_wf<T: Target>(self, prog: Program) -> Result<()> {
         // We do *not* require that size is a multiple of align!
         self.layout.check_wf::<T>(prog)?;
+        self.freeze.check_wf::<T>(prog)?;
 
         ret(())
     }
@@ -121,7 +158,7 @@ impl Type {
                     // Ensure it fits after the one we previously checked.
                     ensure_wf(offset >= last_end, "Type::Tuple: overlapping fields")?;
                     ensure_wf(ty.layout::<T>().is_sized(), "Type::Tuple: unsized field type in head")?;
-                    last_end = offset + ty.layout::<T>().expect_size("ensured to be sized above");    
+                    last_end = offset + ty.layout::<T>().expect_size("ensured to be sized above");
                 }
                 // The unsized field must actually be unsized.
                 if let Some(unsized_field) = unsized_field {
@@ -238,7 +275,7 @@ impl Discriminator {
                     ensure_wf(value_type.can_represent(end - Int::ONE), "Discriminator: invalid branch end bound")?;
                     ensure_wf(start < end, "Discriminator: invalid bound values")?;
                     // Ensure that the ranges don't overlap.
-                    ensure_wf(children.keys().enumerate().all(|(other_idx, (other_start, other_end))| 
+                    ensure_wf(children.keys().enumerate().all(|(other_idx, (other_start, other_end))|
                                 other_end <= start || other_start >= end || idx == other_idx), "Discriminator: branch ranges overlap")?;
                     discriminator.check_wf::<T>(size, variants)?;
                 }
@@ -339,7 +376,7 @@ impl ValueExpr {
                 union_ty
             }
             Variant { discriminant, data, enum_ty } => {
-                let Type::Enum { variants, .. } = enum_ty else { 
+                let Type::Enum { variants, .. } = enum_ty else {
                     throw_ill_formed!("ValueExpr::Variant: invalid type")
                 };
                 enum_ty.check_wf::<T>(prog)?;
@@ -657,7 +694,7 @@ impl Statement {
 
 /// Predicate to indicate if integer bin-op can be used for atomic fetch operations.
 /// Needed for atomic fetch operations.
-/// 
+///
 /// We limit the binops that are allowed to be atomic based on current LLVM and Rust API exposures.
 fn is_atomic_binop(op: IntBinOp) -> bool {
     use IntBinOp as B;
