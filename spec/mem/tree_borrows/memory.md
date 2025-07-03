@@ -136,7 +136,7 @@ impl<T: Target> TreeBorrowsMemory<T> {
             visit_freeze_sensitive(pointee_nonfreeze_bytes, offset, pointee_size, |offset, frozen| {
                 let permission = if frozen { new_perm.freeze_perm } else { new_perm.nonfreeze_perm };
                 location_states.set(offset.bytes(), LocationState {
-                    accessed: Accessed::No,
+                    accessed: Accessed::No, // This gets updated to `Accessed::Yes` if
                     permission,
                 });
                 Ok(())
