@@ -19,7 +19,12 @@ impl<'tcx> Ctxt<'tcx> {
             nonfreeze_bytes.sort_by(|a, b| a.0.cmp(&b.0));
             let nonfreeze_bytes = nonfreeze_bytes.into_iter().collect::<List<(Offset, Offset)>>();
 
-            return PointeeInfo { layout, inhabited, freeze: UnsafeCellStrategy::Sized { bytes: nonfreeze_bytes }, unpin };
+            return PointeeInfo {
+                layout,
+                inhabited,
+                freeze: UnsafeCellStrategy::Sized { bytes: nonfreeze_bytes },
+                unpin,
+            };
         }
 
         // Handle Unsized types:
@@ -28,21 +33,37 @@ impl<'tcx> Ctxt<'tcx> {
                 let elem_layout = self.rs_layout_of(elem_ty);
                 let mut elem_nonfreeze_bytes = self.nonfreeze_bytes_in_sized_ty(elem_ty, span);
                 elem_nonfreeze_bytes.sort_by(|a, b| a.0.cmp(&b.0));
-                let elem_nonfreeze_bytes = elem_nonfreeze_bytes.into_iter().collect::<List<(Offset, Offset)>>();
+                let elem_nonfreeze_bytes =
+                    elem_nonfreeze_bytes.into_iter().collect::<List<(Offset, Offset)>>();
 
                 let size = translate_size(elem_layout.size());
                 let align = translate_align(elem_layout.align().abi);
                 let layout = LayoutStrategy::Slice(size, align);
-                PointeeInfo { layout, inhabited, freeze: UnsafeCellStrategy::Slice { element: elem_nonfreeze_bytes }, unpin }
+                PointeeInfo {
+                    layout,
+                    inhabited,
+                    freeze: UnsafeCellStrategy::Slice { element: elem_nonfreeze_bytes },
+                    unpin,
+                }
             }
             &rs::TyKind::Str => {
                 // Treat `str` like `[u8]`.
                 let layout = LayoutStrategy::Slice(Size::from_bytes_const(1), Align::ONE);
-                PointeeInfo { layout, inhabited, freeze: UnsafeCellStrategy::Slice { element: List::new() }, unpin }
+                PointeeInfo {
+                    layout,
+                    inhabited,
+                    freeze: UnsafeCellStrategy::Slice { element: List::new() },
+                    unpin,
+                }
             }
             &rs::TyKind::Dynamic(_, _, rs::DynKind::Dyn) => {
                 let layout = LayoutStrategy::TraitObject(self.get_trait_name(ty));
-                PointeeInfo { layout, inhabited, freeze: UnsafeCellStrategy::TraitObject { is_freeze: freeze }, unpin }
+                PointeeInfo {
+                    layout,
+                    inhabited,
+                    freeze: UnsafeCellStrategy::TraitObject { is_freeze: freeze },
+                    unpin,
+                }
             }
             _ => rs::span_bug!(span, "encountered unimplemented unsized type: {ty}"),
         }
@@ -56,7 +77,11 @@ impl<'tcx> Ctxt<'tcx> {
         self.translate_ty(smir::internal(self.tcx, ty), span)
     }
 
-    pub fn nonfreeze_bytes_in_sized_ty(&mut self, ty: rs::Ty<'tcx>, span: rs::Span) -> Vec<(Offset, Offset)> {
+    pub fn nonfreeze_bytes_in_sized_ty(
+        &mut self,
+        ty: rs::Ty<'tcx>,
+        span: rs::Span,
+    ) -> Vec<(Offset, Offset)> {
         match ty.kind() {
             rs::TyKind::Bool => Vec::new(),
             rs::TyKind::Int(_) => Vec::new(),
@@ -68,10 +93,15 @@ impl<'tcx> Ctxt<'tcx> {
             rs::TyKind::Never => Vec::new(),
             rs::TyKind::Tuple(ts) => {
                 let layout = self.rs_layout_of(ty);
-                ts.iter().enumerate().flat_map(|(i, ty)| {
-                    let offset = translate_size(layout.fields().offset(i));
-                    self.nonfreeze_bytes_in_sized_ty(ty, span).into_iter().map(move |(start, end)| (start + offset, end + offset))
-                }).collect()
+                ts.iter()
+                    .enumerate()
+                    .flat_map(|(i, ty)| {
+                        let offset = translate_size(layout.fields().offset(i));
+                        self.nonfreeze_bytes_in_sized_ty(ty, span)
+                            .into_iter()
+                            .map(move |(start, end)| (start + offset, end + offset))
+                    })
+                    .collect()
             }
             rs::TyKind::Adt(adt_def, _) if adt_def.is_unsafe_cell() => {
                 let layout = self.rs_layout_of(ty);
@@ -80,7 +110,8 @@ impl<'tcx> Ctxt<'tcx> {
             }
             rs::TyKind::Adt(adt_def, sref) if adt_def.is_struct() => {
                 let layout = self.rs_layout_of(ty);
-                adt_def.non_enum_variant()
+                adt_def
+                    .non_enum_variant()
                     .fields
                     .iter_enumerated()
                     .flat_map(|(i, field)| {
@@ -90,7 +121,9 @@ impl<'tcx> Ctxt<'tcx> {
                         let ty = self.tcx.normalize_erasing_regions(self.typing_env(), ty);
                         let offset = layout.fields().offset(i.into());
                         let offset = translate_size(offset);
-                        self.nonfreeze_bytes_in_sized_ty(ty, span).into_iter().map(move |(start, end)| (start + offset, end + offset))
+                        self.nonfreeze_bytes_in_sized_ty(ty, span)
+                            .into_iter()
+                            .map(move |(start, end)| (start + offset, end + offset))
                     })
                     .collect()
             }
@@ -100,11 +133,7 @@ impl<'tcx> Ctxt<'tcx> {
                 let layout = self.rs_layout_of(ty);
                 let size = translate_size(layout.size());
 
-                if ty_is_freeze {
-                    Vec::new()
-                } else {
-                    vec![(Size::ZERO, size)]
-                }
+                if ty_is_freeze { Vec::new() } else { vec![(Size::ZERO, size)] }
             }
             rs::TyKind::Array(elem_ty, c) => {
                 let range = self.nonfreeze_bytes_in_sized_ty(*elem_ty, span);
@@ -114,16 +143,19 @@ impl<'tcx> Ctxt<'tcx> {
                     let count = c.try_to_target_usize(self.tcx).unwrap();
                     let ranges = vec![0, count];
 
-                    ranges.iter().enumerate().flat_map(|(i, _)| {
-                        let offset = size * i.into();
-                        range.iter().map(move |(start, end)| (*start + offset, *end + offset))
-                    }).collect()
+                    ranges
+                        .iter()
+                        .enumerate()
+                        .flat_map(|(i, _)| {
+                            let offset = size * i.into();
+                            range.iter().map(move |(start, end)| (*start + offset, *end + offset))
+                        })
+                        .collect()
                 } else {
                     Vec::new()
                 }
-            },
+            }
             x => rs::span_bug!(span, "TyKind not supported: {x:?}"),
-
         }
     }
 

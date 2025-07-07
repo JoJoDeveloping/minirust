@@ -79,12 +79,7 @@ impl<T: TypeConv + ?Sized + Freeze> TypeConv for &T {
         let layout = T::get_layout();
         let freeze = UnsafeCellStrategy::from_frozen_layout(layout);
 
-        ref_ty(PointeeInfo {
-            layout,
-            inhabited: true,
-            freeze,
-            unpin: T::UNPIN,
-        })
+        ref_ty(PointeeInfo { layout, inhabited: true, freeze, unpin: T::UNPIN })
     }
 }
 
@@ -93,12 +88,7 @@ impl<T: TypeConv + ?Sized + Freeze> TypeConv for &mut T {
         let layout = T::get_layout();
         let freeze = UnsafeCellStrategy::from_frozen_layout(layout);
 
-        ref_mut_ty(PointeeInfo {
-            layout,
-            inhabited: true,
-            freeze,
-            unpin: T::UNPIN,
-        })
+        ref_mut_ty(PointeeInfo { layout, inhabited: true, freeze, unpin: T::UNPIN })
     }
 }
 

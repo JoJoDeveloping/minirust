@@ -18,12 +18,7 @@ pub fn ref_ty_default_markers_for(ty: Type) -> Type {
     let layout = ty.layout::<DefaultTarget>();
     let freeze = UnsafeCellStrategy::from_frozen_layout(layout);
 
-    ref_ty(PointeeInfo {
-        layout,
-        inhabited: true,
-        freeze,
-        unpin: true,
-    })
+    ref_ty(PointeeInfo { layout, inhabited: true, freeze, unpin: true })
 }
 
 pub fn ref_mut_ty(pointee: PointeeInfo) -> Type {
@@ -36,12 +31,7 @@ pub fn ref_mut_ty_default_markers_for(ty: Type) -> Type {
     let layout = ty.layout::<DefaultTarget>();
     let freeze = UnsafeCellStrategy::from_frozen_layout(layout);
 
-    ref_mut_ty(PointeeInfo {
-        layout,
-        inhabited: true,
-        freeze,
-        unpin: true,
-    })
+    ref_mut_ty(PointeeInfo { layout, inhabited: true, freeze, unpin: true })
 }
 
 pub fn box_ty(pointee: PointeeInfo) -> Type {

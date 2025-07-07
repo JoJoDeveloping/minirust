@@ -15,9 +15,9 @@ pub use minirust_rs::prelude::NdResult;
 pub use minirust_rs::prelude::*;
 
 pub use std::format;
+pub use std::marker::Freeze;
 pub use std::result::Result;
 pub use std::string::String;
-pub use std::marker::Freeze;
 
 pub mod build;
 pub mod fmt;
