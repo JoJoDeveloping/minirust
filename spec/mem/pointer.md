@@ -106,16 +106,16 @@ pub enum LayoutStrategy {
     },
 }
 
-// pub type Range = (Offset, Offset);??
-
 /// Corresponds to the variants of `LayoutStrategy`
 pub enum UnsafeCellStrategy {
-    /// List of [start, end) ranges.
+    /// List of [start, end) ranges where we have UnsafeCells.
     Sized { bytes: List<(Offset, Offset)> },
     /// Since the elements of a slice have the same type, we only keep track of the
     /// UnsafeCell's of one element, we can then "repeat" this for the rest of the slice.
     Slice { element: List<(Offset, Offset)> },
+    /// The bytes for UnsafeCell's must be looked up in the VTable.
     TraitObject { is_freeze: bool },
+    /// A Tuple consists of a sized head an unsized tail.
     Tuple {
         head: List<(Offset, Offset)>,
         #[specr::indirection]
@@ -134,6 +134,7 @@ impl UnsafeCellStrategy {
         }
     }
 
+    /// Create an UnsafeCellStrategy with no UnsafeCell bytes from a LayoutStrategy.
     pub fn from_frozen_layout(layout: LayoutStrategy) -> Self {
         match layout {
             LayoutStrategy::Sized(..) => Self::Sized { bytes: List::new() },

@@ -79,14 +79,14 @@ impl UnsafeCellStrategy {
         // in ascending order and don't contain overlapping ranges.
         let is_sorted = |list: List<(Offset, Offset)>| { list.iter().is_sorted_by(|a, b| a.0 <= b.0) };
         let has_overlap = |list: List<(Offset, Offset)> | {
-            let first = list.first().map(|(start, _end)| start).unwrap_or(Size::ZERO);
-            list.iter().fold((first, false), |acc, (start, end)| {
-                if acc.1 || acc.0 > start{
-                    (end, true)
-                } else {
-                    (end, false)
+            let mut last_end = Size::ZERO;
+            for (start, end) in list {
+                if start < last_end {
+                    return true;
                 }
-            }).1
+                last_end = end;
+            }
+            return false;
         };
         let greatest_end = |list: List<(Offset, Offset)>| list.last().map(|(_start, end)| end).unwrap_or(Size::ZERO);
 

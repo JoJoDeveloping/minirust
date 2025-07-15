@@ -15,14 +15,14 @@ impl<'tcx> Ctxt<'tcx> {
             // Because we compute `nonfreeze_bytes` by iterating through the fields of
             // the type in declaration, not in memory order, the order of the ranges are
             // not necessarily sorted in ascending order.
-            let mut nonfreeze_bytes = self.nonfreeze_bytes_in_sized_ty(ty, span);
-            nonfreeze_bytes.sort_by(|a, b| a.0.cmp(&b.0));
-            let nonfreeze_bytes = nonfreeze_bytes.into_iter().collect::<List<(Offset, Offset)>>();
+            let mut cell_bytes = self.cell_bytes_in_sized_ty(ty, span);
+            cell_bytes.sort_by(|a, b| a.0.cmp(&b.0));
+            let cell_bytes = cell_bytes.into_iter().collect::<List<(Offset, Offset)>>();
 
             return PointeeInfo {
                 layout,
                 inhabited,
-                freeze: UnsafeCellStrategy::Sized { bytes: nonfreeze_bytes },
+                freeze: UnsafeCellStrategy::Sized { bytes: cell_bytes },
                 unpin,
             };
         }
@@ -31,7 +31,7 @@ impl<'tcx> Ctxt<'tcx> {
         match ty.kind() {
             &rs::TyKind::Slice(elem_ty) => {
                 let elem_layout = self.rs_layout_of(elem_ty);
-                let mut elem_nonfreeze_bytes = self.nonfreeze_bytes_in_sized_ty(elem_ty, span);
+                let mut elem_nonfreeze_bytes = self.cell_bytes_in_sized_ty(elem_ty, span);
                 elem_nonfreeze_bytes.sort_by(|a, b| a.0.cmp(&b.0));
                 let elem_nonfreeze_bytes =
                     elem_nonfreeze_bytes.into_iter().collect::<List<(Offset, Offset)>>();
@@ -77,7 +77,7 @@ impl<'tcx> Ctxt<'tcx> {
         self.translate_ty(smir::internal(self.tcx, ty), span)
     }
 
-    pub fn nonfreeze_bytes_in_sized_ty(
+    pub fn cell_bytes_in_sized_ty(
         &mut self,
         ty: rs::Ty<'tcx>,
         span: rs::Span,
@@ -97,7 +97,7 @@ impl<'tcx> Ctxt<'tcx> {
                     .enumerate()
                     .flat_map(|(i, ty)| {
                         let offset = translate_size(layout.fields().offset(i));
-                        self.nonfreeze_bytes_in_sized_ty(ty, span)
+                        self.cell_bytes_in_sized_ty(ty, span)
                             .into_iter()
                             .map(move |(start, end)| (start + offset, end + offset))
                     })
@@ -121,7 +121,7 @@ impl<'tcx> Ctxt<'tcx> {
                         let ty = self.tcx.normalize_erasing_regions(self.typing_env(), ty);
                         let offset = layout.fields().offset(i.into());
                         let offset = translate_size(offset);
-                        self.nonfreeze_bytes_in_sized_ty(ty, span)
+                        self.cell_bytes_in_sized_ty(ty, span)
                             .into_iter()
                             .map(move |(start, end)| (start + offset, end + offset))
                     })
@@ -136,7 +136,7 @@ impl<'tcx> Ctxt<'tcx> {
                 if ty_is_freeze { Vec::new() } else { vec![(Size::ZERO, size)] }
             }
             rs::TyKind::Array(elem_ty, c) => {
-                let range = self.nonfreeze_bytes_in_sized_ty(*elem_ty, span);
+                let range = self.cell_bytes_in_sized_ty(*elem_ty, span);
                 if !range.is_empty() {
                     let layout = self.rs_layout_of(*elem_ty);
                     let size = translate_size(layout.size());
