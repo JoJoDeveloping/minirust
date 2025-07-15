@@ -48,20 +48,6 @@ Finally, we define the transition table.
 
 ```rust
 impl Permission {
-    fn default(mutbl: Mutability, is_freeze: bool, protected: Protected) -> Permission {
-        match mutbl {
-            // We only use `ReservedIm` for *unprotected* mutable references with interior mutability.
-            // If the reference is protected, we ignore the interior mutability.
-            // An example for why "Protected + Interior Mutability" is undesirable
-            // can be found in tooling/minimize/tests/ub/tree_borrows/protector/ReservedIm_spurious_write.rs.
-            Mutability::Mutable if !is_freeze && protected.no() => Permission::ReservedIm,
-            Mutability::Mutable => Permission::Reserved { conflicted: false },
-            Mutability::Immutable if !is_freeze => Permission::Cell,
-            // if is_freeze
-            Mutability::Immutable => Permission::Frozen,
-        }
-    }
-
     fn local_read(self) -> Result<Permission> {
         ret(
             match self {
