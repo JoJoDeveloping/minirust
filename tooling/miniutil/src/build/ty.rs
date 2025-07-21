@@ -12,13 +12,27 @@ pub fn ref_ty(pointee: PointeeInfo) -> Type {
     Type::Ptr(PtrType::Ref { mutbl: Mutability::Immutable, pointee })
 }
 
+/// Create an UnsafeCellStrategy with no UnsafeCell bytes from a LayoutStrategy.
+pub fn from_frozen_layout(layout: LayoutStrategy) -> UnsafeCellStrategy {
+    match layout {
+        LayoutStrategy::Sized(..) => UnsafeCellStrategy::Sized { bytes: List::new() },
+        LayoutStrategy::Slice(..) => UnsafeCellStrategy::Slice { element: List::new() },
+        LayoutStrategy::TraitObject(..) => UnsafeCellStrategy::TraitObject { is_freeze: true },
+        LayoutStrategy::Tuple { tail, .. } =>
+            UnsafeCellStrategy::Tuple {
+                head: List::new(),
+                tail: GcCow::new(from_frozen_layout(tail.extract())),
+            },
+    }
+}
+
 /// Create a minirust reference type for a minirust type which implements default marker traits,
 /// i.e. the type is `Unpin`, `Freeze` and is inhabited.
 pub fn ref_ty_default_markers_for(ty: Type) -> Type {
     let layout = ty.layout::<DefaultTarget>();
-    let freeze = UnsafeCellStrategy::from_frozen_layout(layout);
+    let unsafe_cells = from_frozen_layout(layout);
 
-    ref_ty(PointeeInfo { layout, inhabited: true, freeze, unpin: true })
+    ref_ty(PointeeInfo { layout, inhabited: true, unsafe_cells, unpin: true })
 }
 
 pub fn ref_mut_ty(pointee: PointeeInfo) -> Type {
@@ -29,9 +43,9 @@ pub fn ref_mut_ty(pointee: PointeeInfo) -> Type {
 /// i.e. the type is `Unpin`, `Freeze` and is inhabited.
 pub fn ref_mut_ty_default_markers_for(ty: Type) -> Type {
     let layout = ty.layout::<DefaultTarget>();
-    let freeze = UnsafeCellStrategy::from_frozen_layout(layout);
+    let unsafe_cells = from_frozen_layout(layout);
 
-    ref_mut_ty(PointeeInfo { layout, inhabited: true, freeze, unpin: true })
+    ref_mut_ty(PointeeInfo { layout, inhabited: true, unsafe_cells, unpin: true })
 }
 
 pub fn box_ty(pointee: PointeeInfo) -> Type {

@@ -125,30 +125,16 @@ pub enum UnsafeCellStrategy {
 
 impl UnsafeCellStrategy {
     /// Tell us whether the range outside of a retag is freeze.
-    pub fn is_freeze(self) -> bool {
+    pub fn is_freeze_outside(self) -> bool {
+        // This also returns true if the list is empty.
+        let only_empty_ranges = |list: List<(Offset, Offset)>| -> bool {
+            list.all(|(start, end)| start == end)
+        };
         match self {
-            Self::Sized { bytes } => bytes.is_empty(),
-            Self::Slice { element } => element.is_empty(),
+            Self::Sized { bytes } => only_empty_ranges(bytes),
+            Self::Slice { element } => only_empty_ranges(element),
             Self::TraitObject { is_freeze } => is_freeze,
-            Self::Tuple { head, tail } => head.is_empty() && tail.is_freeze(),
-        }
-    }
-
-    /// Create an UnsafeCellStrategy with no UnsafeCell bytes from a LayoutStrategy.
-    pub fn from_frozen_layout(layout: LayoutStrategy) -> Self {
-        match layout {
-            LayoutStrategy::Sized(..) => Self::Sized { bytes: List::new() },
-            LayoutStrategy::Slice(..) => Self::Slice { element: List::new() },
-            LayoutStrategy::TraitObject(..) => Self::TraitObject { is_freeze: true },
-            LayoutStrategy::Tuple { tail, .. } => Self::Tuple { head: List::new(), tail: Self::from_frozen_layout(tail) },
-        }
-    }
-
-    pub fn nonfreeze_bytes(self) -> List<(Offset, Offset)> {
-        match self {
-            Self::Sized { bytes } => bytes,
-            // TODO: Implement for unsized cases
-            _ => List::new(),
+            Self::Tuple { head, tail } => (only_empty_ranges(head)) && tail.is_freeze_outside(),
         }
     }
 }
@@ -157,7 +143,7 @@ impl UnsafeCellStrategy {
 pub struct PointeeInfo {
     pub layout: LayoutStrategy,
     pub inhabited: bool,
-    pub freeze: UnsafeCellStrategy,
+    pub unsafe_cells: UnsafeCellStrategy,
     pub unpin: bool,
 }
 

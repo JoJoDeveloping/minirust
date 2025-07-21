@@ -66,44 +66,33 @@ Here we define some helper methods to implement the memory interface.
 
 ```rust
 
-fn compute_nonfreeze_bytes(
-    cell_strategy: UnsafeCellStrategy,
-    layout_strategy: LayoutStrategy,
-    ptr_metadata: Option<PointerMeta<TreeBorrowsProvenance>>,
-    offset: Offset
-) -> List<(Offset, Offset)> {
-    match (cell_strategy, layout_strategy, ptr_metadata) {
-        (UnsafeCellStrategy::Sized { bytes }, ..) => bytes,
-        (UnsafeCellStrategy::Slice { element }, LayoutStrategy::Slice(..), Some(PointerMeta::ElementCount(count))) => {
-            (Int::ZERO..count).collect::<List<Int>>().flat_map(|i| element.map(|(start, end)| {
-                let offset = offset * i;
-                (start + offset, end + offset)
-            }))
-        },
-        (UnsafeCellStrategy::TraitObject { .. }, LayoutStrategy::TraitObject(_trait_name), Some(PointerMeta::VTablePointer(_ptr))) => {
-            todo!("UnsafeCellStrategy::TraitObject non-freeze bytes")
-        },
-        (UnsafeCellStrategy::Tuple { head, tail }, LayoutStrategy::Tuple { head: TupleHeadLayout { end, .. }, tail: tail_layout }, _) => {
-            head.iter()
-                .map(|(start, end)| (start + offset, end + offset))
-                .chain(compute_nonfreeze_bytes(tail, tail_layout, ptr_metadata, offset + end).iter()).collect()
-        },
-        _ => panic!("Invalid UnsafeCellStrategy, LayoutStrategy and PointerMeta combination"),
-    }
-}
+// fn compute_nonfreeze_bytes(
+//     cell_strategy: UnsafeCellStrategy,
+//     layout_strategy: LayoutStrategy,
+//     ptr_metadata: Option<PointerMeta<TreeBorrowsProvenance>>,
+//     offset: Offset
+// ) -> List<(Offset, Offset)> {
+//     match (cell_strategy, layout_strategy, ptr_metadata) {
+//         (UnsafeCellStrategy::Sized { bytes }, ..) => bytes,
+//         (UnsafeCellStrategy::Slice { element }, LayoutStrategy::Slice(size, _), Some(PointerMeta::ElementCount(count))) => {
+//             (Int::ZERO..count).collect::<List<Int>>().flat_map(|i| {
+//                 let offset = size * i;
+//                 element.map(|(start, end)| (start + offset, end + offset))
+//             })
+//         },
+//         (UnsafeCellStrategy::TraitObject { trait_name, .. }, _, Some(PointerMeta::VTablePointer(_ptr))) => {
+//             todo!("UnsafeCellStrategy::TraitObject non-freeze bytes")
+//         },
+//         (UnsafeCellStrategy::Tuple { head, tail }, LayoutStrategy::Tuple { head: TupleHeadLayout { end, .. }, tail: tail_layout }, _) => {
+//             head.iter()
+//                 .map(|(start, end)| (start + offset, end + offset))
+//                 .chain(compute_nonfreeze_bytes(tail, tail_layout, ptr_metadata, offset + end).iter()).collect()
+//         },
+//         _ => panic!("Invalid UnsafeCellStrategy, LayoutStrategy and PointerMeta combination"),
+//     }
+// }
 
-/// Call f(start + 0, is_cell_0), f(start + 1, is_cell_1), ..., f(start + size - 1, is_cell_size-1)
-/// where is_cell_i is true if the i-th byte in the range does not contain an UnsafeCell.
-fn iter_freeze_sensitive(
-    cell_strategy: UnsafeCellStrategy,
-    layout_strategy: LayoutStrategy,
-    ptr_metadata: Option<PointerMeta<TreeBorrowsProvenance>>,
-    start: Offset,
-    size: Size,
-    mut f: impl FnMut(Offset, bool) -> Result
-) -> Result {
-    let nonfreeze_bytes = compute_nonfreeze_bytes(cell_strategy, layout_strategy, ptr_metadata, Size::ZERO);
-
+fn act_on_bytes(nonfreeze_bytes: List<(Offset, Offset)>, start: Offset, size: Size, mut f: impl FnMut(Offset, bool) -> Result) -> Result {
     assert!(nonfreeze_bytes.iter().is_sorted_by(|a, b| a.0 <= b.0));
 
     let padded_front = std::iter::once((Size::ZERO, Size::ZERO)).chain(nonfreeze_bytes.iter());
@@ -133,15 +122,37 @@ fn iter_freeze_sensitive(
     Ok(())
 }
 
-/// Given corresponding PointerMeta Compute the size of the pointee with this LayoutStrategy
-fn compute_pointee_size(layout: LayoutStrategy, ptr_metadata: Option<PointerMeta<TreeBorrowsProvenance>>) -> Size {
-    match (layout, ptr_metadata) {
-        (LayoutStrategy::Sized(size, _), _) => size,
-        (LayoutStrategy::Slice(size, _), Some(PointerMeta::ElementCount(count))) => size * count,
-        (LayoutStrategy::TraitObject(_trait_name), Some(PointerMeta::VTablePointer(_ptr))) => todo!("LayoutStrategy::TraitObject pointee size"),
-        (LayoutStrategy::Tuple { head: TupleHeadLayout { end, .. }, tail }, _) => end + compute_pointee_size(tail, ptr_metadata),
-        _ => panic!("compute_pointee_size: Invalid LayoutStrategy and PointerMeta combination"),
-    }
+
+/// Call f(start + 0, is_cell_0), f(start + 1, is_cell_1), ..., f(start + size - 1, is_cell_size-1)
+/// where is_cell_i is true if the i-th byte in the range does not contain an UnsafeCell.
+fn iter_freeze_sensitive(
+    cell_strategy: UnsafeCellStrategy,
+    layout_strategy: LayoutStrategy,
+    ptr_metadata: Option<PointerMeta<TreeBorrowsProvenance>>,
+    start: Offset,
+    size: Size,
+    mut f: impl FnMut(Offset, bool) -> Result
+) -> Result {
+    match (cell_strategy, layout_strategy, ptr_metadata) {
+        (UnsafeCellStrategy::Sized { bytes }, ..) => {
+            act_on_bytes(bytes, start, size, f)?
+        },
+        (UnsafeCellStrategy::Slice { element }, LayoutStrategy::Slice(size, _), Some(PointerMeta::ElementCount(count))) => {
+            for i in Int::ZERO..count {
+                let offset = size * i;
+                act_on_bytes(element, start + offset, size, &mut f)?
+            };
+        },
+        (UnsafeCellStrategy::TraitObject { .. }, LayoutStrategy::TraitObject(_trait_name), Some(PointerMeta::VTablePointer(_ptr))) => {
+            todo!("UnsafeCellStrategy::TraitObject non-freeze bytes")
+        },
+        (UnsafeCellStrategy::Tuple { head, tail }, LayoutStrategy::Tuple { head: TupleHeadLayout { end, .. }, tail: tail_layout }, _) => {
+            act_on_bytes(head, start, size, &mut f)?;
+            iter_freeze_sensitive(tail, tail_layout, ptr_metadata, start + end, size, f)?
+        },
+        _ => panic!("Invalid UnsafeCellStrategy, LayoutStrategy and PointerMeta combination"),
+    };
+    Ok(())
 }
 
 impl<T: Target> TreeBorrowsMemory<T> {
@@ -153,10 +164,10 @@ impl<T: Target> TreeBorrowsMemory<T> {
         mutbl: Mutability,
         protected: Protected,
         frame_extra: &mut TreeBorrowsFrameExtra,
+        vtable_lookup: impl Fn(ThinPointer<TreeBorrowsProvenance>) -> crate::lang::VTable + 'static,
     ) -> Result<ThinPointer<TreeBorrowsProvenance>> {
         let thin_ptr = ptr.thin_pointer;
-        let pointee_size = compute_pointee_size(pointee_info.layout, ptr.metadata);
-        // println!("{:?}\n\n", pointee_size);
+        let (pointee_size, _align) = pointee_info.layout.compute_size_and_align(ptr.metadata, vtable_lookup);
 
         // Make sure the pointer is dereferenceable.
         self.mem.check_ptr(thin_ptr, pointee_size)?;
@@ -172,10 +183,18 @@ impl<T: Target> TreeBorrowsMemory<T> {
             let size = allocation.size();
             let offset = Offset::from_bytes(thin_ptr.addr - allocation.addr).unwrap();
 
+            // Permission for the surrounding data of the pointee.  We allow lazily
+            // writing to surrounding data if there is an `UnsafeCell` in the pointee.
+            let (freeze_perm, nonfreeze_perm) = if mutbl == Mutability::Immutable {
+                (Permission::Frozen, Permission::Cell)
+            } else {
+                (Permission::Reserved { conflicted: false }, Permission::ReservedIm)
+            };
+            let default_perm = if pointee_info.unsafe_cells.is_freeze_outside() { freeze_perm } else { nonfreeze_perm };
+            let mut location_states = LocationState::new_list(default_perm, size);
+
             // Compute permissions
-            let freeze_perm = if mutbl == Mutability::Immutable { Permission::Frozen } else { Permission::Reserved { conflicted: false } };
-            let mut location_states = LocationState::new_list(freeze_perm, size);
-            iter_freeze_sensitive(pointee_info.freeze, pointee_info.layout, ptr.metadata, offset, pointee_size, |offset, frozen| {
+            iter_freeze_sensitive(pointee_info.unsafe_cells, pointee_info.layout, ptr.metadata, offset, pointee_size, |offset, frozen| {
                 let permission = match mutbl {
                     // We only use `ReservedIm` for *unprotected* mutable references with interior mutability.
                     // If the reference is protected, we ignore the interior mutability.
@@ -188,7 +207,7 @@ impl<T: Target> TreeBorrowsMemory<T> {
                 };
 
                 location_states.set(offset.bytes(), LocationState {
-                    accessed: Accessed::No, // This gets updated to `Accessed::Yes` if
+                    accessed: Accessed::No, // This gets updated to `Accessed::Yes` if `allocation.extra.root.access(...)` runs.
                     permission,
                 });
                 Ok(())
@@ -206,12 +225,12 @@ impl<T: Target> TreeBorrowsMemory<T> {
 
             // If this is a non-zero-sized reborrow, perform read on the new child if needed, updating all nodes accordingly.
             if pointee_size.bytes() > 0 {
-                iter_freeze_sensitive(pointee_info.freeze, pointee_info.layout, ptr.metadata, offset, pointee_size, |offset, frozen| {
+                iter_freeze_sensitive(pointee_info.unsafe_cells, pointee_info.layout, ptr.metadata, offset, pointee_size, |offset, _frozen| {
                     // We don't want to perform a read access on the non-frozen part if we have a shared reference,
                     // i.e. when we have a Cell permission.  For mutable references, the only difference between
                     // the ReservedIM and Reserved permissions is how resistant they are to foreign writes, so
                     // mutable references should have an implicit read access.
-                    if frozen || mutbl == Mutability::Mutable {
+                    if location_states.get(offset.bytes()).unwrap().permission != Permission::Cell {
                         allocation.extra.root.access(Some(child_path), AccessKind::Read, offset, Offset::from_bytes_const(1))?
                     }
                     Ok(())
@@ -255,19 +274,19 @@ impl<T: Target> TreeBorrowsMemory<T> {
 
     /// Compute the reborrow settings for the given pointer type.
     /// `None` indicates that no reborrow should happen.
-    fn ptr_reborrow_settings(ptr_type: PtrType, fn_entry: bool) -> Option<(Mutability, Protected)> {
+    fn ptr_reborrow_settings(ptr_type: PtrType, fn_entry: bool) -> Option<(Mutability, Protected, PointeeInfo)> {
         match ptr_type {
             PtrType::Ref { mutbl, pointee } if !pointee.unpin && mutbl == Mutability::Mutable => {
                 // Mutable reference to pinning type: retagging is a NOP.
                 None
             },
-            PtrType::Ref { mutbl, .. } => {
+            PtrType::Ref { mutbl, pointee } => {
                 let protected = if fn_entry { Protected::Strong } else { Protected::No };
-                Some((mutbl, protected))
+                Some((mutbl, protected, pointee))
             },
-            PtrType::Box { .. } => {
+            PtrType::Box { pointee } => {
                 let protected = if fn_entry { Protected::Weak } else { Protected::No };
-                Some((Mutability::Mutable, protected))
+                Some((Mutability::Mutable, protected, pointee))
             },
             _ => None,
         }
@@ -344,14 +363,10 @@ impl<T: Target> Memory for TreeBorrowsMemory<T> {
         ptr: Pointer<Self::Provenance>,
         ptr_type: PtrType,
         fn_entry: bool,
-        _size_computer: impl Fn(LayoutStrategy, Option<PointerMeta<Self::Provenance>>) -> Size, // TODO: Remove this later?
+        vtable_lookup: impl Fn(ThinPointer<Self::Provenance>) -> crate::lang::VTable + 'static,
     ) -> Result<Pointer<Self::Provenance>> {
-        ret(if let Some((mutbl, protected)) = Self::ptr_reborrow_settings(ptr_type, fn_entry) {
-            let pointee_info = match ptr_type.safe_pointee() {
-                Some(pointee_info) => pointee_info,
-                None => panic!("'retag_ptr' should only be called with data pointers (PtrType::Ref or PtrType::Box)."),
-            };
-            self.reborrow(ptr, pointee_info, mutbl, protected, frame_extra)?.widen(ptr.metadata)
+        ret(if let Some((mutbl, protected, pointee_info)) = Self::ptr_reborrow_settings(ptr_type, fn_entry) {
+            self.reborrow(ptr, pointee_info, mutbl, protected, frame_extra, vtable_lookup)?.widen(ptr.metadata)
         } else {
             ptr
         })

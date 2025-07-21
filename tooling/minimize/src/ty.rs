@@ -12,7 +12,7 @@ impl<'tcx> Ctxt<'tcx> {
             let align = translate_align(layout.align().abi);
             let layout = LayoutStrategy::Sized(size, align);
 
-            // Because we compute `nonfreeze_bytes` by iterating through the fields of
+            // Because we compute `cell_bytes` by iterating through the fields of
             // the type in declaration, not in memory order, the order of the ranges are
             // not necessarily sorted in ascending order.
             let mut cell_bytes = self.cell_bytes_in_sized_ty(ty, span);
@@ -22,7 +22,7 @@ impl<'tcx> Ctxt<'tcx> {
             return PointeeInfo {
                 layout,
                 inhabited,
-                freeze: UnsafeCellStrategy::Sized { bytes: cell_bytes },
+                unsafe_cells: UnsafeCellStrategy::Sized { bytes: cell_bytes },
                 unpin,
             };
         }
@@ -42,7 +42,7 @@ impl<'tcx> Ctxt<'tcx> {
                 PointeeInfo {
                     layout,
                     inhabited,
-                    freeze: UnsafeCellStrategy::Slice { element: elem_nonfreeze_bytes },
+                    unsafe_cells: UnsafeCellStrategy::Slice { element: elem_nonfreeze_bytes },
                     unpin,
                 }
             }
@@ -52,7 +52,7 @@ impl<'tcx> Ctxt<'tcx> {
                 PointeeInfo {
                     layout,
                     inhabited,
-                    freeze: UnsafeCellStrategy::Slice { element: List::new() },
+                    unsafe_cells: UnsafeCellStrategy::Slice { element: List::new() },
                     unpin,
                 }
             }
@@ -61,7 +61,7 @@ impl<'tcx> Ctxt<'tcx> {
                 PointeeInfo {
                     layout,
                     inhabited,
-                    freeze: UnsafeCellStrategy::TraitObject { is_freeze: freeze },
+                    unsafe_cells: UnsafeCellStrategy::TraitObject { is_freeze: freeze },
                     unpin,
                 }
             }
