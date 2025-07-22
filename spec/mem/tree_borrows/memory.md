@@ -65,33 +65,6 @@ impl TreeBorrowsFrameExtra {
 Here we define some helper methods to implement the memory interface.
 
 ```rust
-
-// fn compute_nonfreeze_bytes(
-//     cell_strategy: UnsafeCellStrategy,
-//     layout_strategy: LayoutStrategy,
-//     ptr_metadata: Option<PointerMeta<TreeBorrowsProvenance>>,
-//     offset: Offset
-// ) -> List<(Offset, Offset)> {
-//     match (cell_strategy, layout_strategy, ptr_metadata) {
-//         (UnsafeCellStrategy::Sized { bytes }, ..) => bytes,
-//         (UnsafeCellStrategy::Slice { element }, LayoutStrategy::Slice(size, _), Some(PointerMeta::ElementCount(count))) => {
-//             (Int::ZERO..count).collect::<List<Int>>().flat_map(|i| {
-//                 let offset = size * i;
-//                 element.map(|(start, end)| (start + offset, end + offset))
-//             })
-//         },
-//         (UnsafeCellStrategy::TraitObject { trait_name, .. }, _, Some(PointerMeta::VTablePointer(_ptr))) => {
-//             todo!("UnsafeCellStrategy::TraitObject non-freeze bytes")
-//         },
-//         (UnsafeCellStrategy::Tuple { head, tail }, LayoutStrategy::Tuple { head: TupleHeadLayout { end, .. }, tail: tail_layout }, _) => {
-//             head.iter()
-//                 .map(|(start, end)| (start + offset, end + offset))
-//                 .chain(compute_nonfreeze_bytes(tail, tail_layout, ptr_metadata, offset + end).iter()).collect()
-//         },
-//         _ => panic!("Invalid UnsafeCellStrategy, LayoutStrategy and PointerMeta combination"),
-//     }
-// }
-
 fn act_on_bytes(nonfreeze_bytes: List<(Offset, Offset)>, start: Offset, size: Size, mut f: impl FnMut(Offset, bool) -> Result) -> Result {
     assert!(nonfreeze_bytes.iter().is_sorted_by(|a, b| a.0 <= b.0));
 
