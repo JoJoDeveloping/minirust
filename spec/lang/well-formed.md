@@ -40,8 +40,12 @@ impl LayoutStrategy {
     fn check_wf<T: Target>(self, prog: Program) -> Result<()> {
         // The align type is always well formed.
         match self {
-            LayoutStrategy::Sized(size, _) => { ensure_wf(T::valid_size(size), "LayoutStrategy: size not valid")?; }
-            LayoutStrategy::Slice(size, _) => { ensure_wf(T::valid_size(size), "LayoutStrategy: element size not valid")?; }
+            LayoutStrategy::Sized(size, _align) => {
+                ensure_wf(T::valid_size(size), "LayoutStrategy: size not valid")?;
+            }
+            LayoutStrategy::Slice(size, _align) => {
+                ensure_wf(T::valid_size(size), "LayoutStrategy: element size not valid")?;
+            }
             LayoutStrategy::TraitObject(trait_name) => {
                 ensure_wf(prog.traits.contains_key(trait_name), "LayoutStrategy: trait name doesn't exist")?;
             }
@@ -73,10 +77,43 @@ impl LayoutStrategy {
     }
 }
 
+impl UnsafeCellStrategy {
+    fn check_cells(cells: List<(Offset, Size)>, size: Size) -> Result<()> {
+        let mut last_end = Size::ZERO;
+        for (start, size) in cells {
+            ensure_wf(start >= last_end, "LayoutStrategy: invalid cells")?;
+            last_end = start + size;
+        }
+        ensure_wf(last_end <= size, "LayoutStrategy: invalid cells")?;
+        ret(())
+    }
+
+    fn check_wf<T: Target>(self, layout: LayoutStrategy) -> Result<()> {
+        match (self, layout) {
+            (UnsafeCellStrategy::Sized { cells }, LayoutStrategy::Sized(size, _)) => {
+                Self::check_cells(cells, size)?;
+            },
+            (UnsafeCellStrategy::Slice { element_cells }, LayoutStrategy::Slice(size, _)) => {
+                Self::check_cells(element_cells, size)?;
+            },
+            (UnsafeCellStrategy::TraitObject, LayoutStrategy::TraitObject(..)) => {},
+            (UnsafeCellStrategy::Tuple { head_cells, tail_cells }, LayoutStrategy::Tuple { head, tail }) => {
+                Self::check_cells(head_cells, head.end)?;
+                tail_cells.check_wf::<T>(tail)?;
+            },
+            _ => {
+                ensure_wf(false, "UnsafeCellStrategy and LayoutStrategy variants do not match")?;
+            },
+        };
+        ret(())
+    }
+}
+
 impl PointeeInfo {
     fn check_wf<T: Target>(self, prog: Program) -> Result<()> {
         // We do *not* require that size is a multiple of align!
         self.layout.check_wf::<T>(prog)?;
+        self.unsafe_cells.check_wf::<T>(self.layout)?;
 
         ret(())
     }
@@ -121,7 +158,7 @@ impl Type {
                     // Ensure it fits after the one we previously checked.
                     ensure_wf(offset >= last_end, "Type::Tuple: overlapping fields")?;
                     ensure_wf(ty.layout::<T>().is_sized(), "Type::Tuple: unsized field type in head")?;
-                    last_end = offset + ty.layout::<T>().expect_size("ensured to be sized above");    
+                    last_end = offset + ty.layout::<T>().expect_size("ensured to be sized above");
                 }
                 // The unsized field must actually be unsized.
                 if let Some(unsized_field) = unsized_field {
@@ -238,7 +275,7 @@ impl Discriminator {
                     ensure_wf(value_type.can_represent(end - Int::ONE), "Discriminator: invalid branch end bound")?;
                     ensure_wf(start < end, "Discriminator: invalid bound values")?;
                     // Ensure that the ranges don't overlap.
-                    ensure_wf(children.keys().enumerate().all(|(other_idx, (other_start, other_end))| 
+                    ensure_wf(children.keys().enumerate().all(|(other_idx, (other_start, other_end))|
                                 other_end <= start || other_start >= end || idx == other_idx), "Discriminator: branch ranges overlap")?;
                     discriminator.check_wf::<T>(size, variants)?;
                 }
@@ -339,7 +376,7 @@ impl ValueExpr {
                 union_ty
             }
             Variant { discriminant, data, enum_ty } => {
-                let Type::Enum { variants, .. } = enum_ty else { 
+                let Type::Enum { variants, .. } = enum_ty else {
                     throw_ill_formed!("ValueExpr::Variant: invalid type")
                 };
                 enum_ty.check_wf::<T>(prog)?;
@@ -657,7 +694,7 @@ impl Statement {
 
 /// Predicate to indicate if integer bin-op can be used for atomic fetch operations.
 /// Needed for atomic fetch operations.
-/// 
+///
 /// We limit the binops that are allowed to be atomic based on current LLVM and Rust API exposures.
 fn is_atomic_binop(op: IntBinOp) -> bool {
     use IntBinOp as B;
@@ -679,7 +716,7 @@ impl Terminator {
         use Terminator::*;
         match self {
             Goto(block_name) => {
-               func.check_next_block(block_name, block_kind)?;
+                func.check_next_block(block_kind, block_name)?;
             }
             Switch { value, cases, fallback } => {
                 let ty = value.check_wf::<T>(func.locals, prog)?;
@@ -693,11 +730,11 @@ impl Terminator {
                 // Ensure the switch cases are all valid.
                 for (case, next_block) in cases.iter() {
                     ensure_wf(switch_ty.can_represent(case), "Terminator::Switch: value does not fit in switch type")?;
-                    func.check_next_block(next_block, block_kind)?;
+                    func.check_next_block(block_kind, next_block)?;
                 }
 
                 // Ensure the fallback is valid.
-                func.check_next_block(fallback, block_kind)?;
+                func.check_next_block(block_kind, fallback)?;
             }
             Unreachable => {}
             Intrinsic { intrinsic, arguments, ret, next_block } => {
@@ -720,7 +757,7 @@ impl Terminator {
                 }
 
                 if let Some(next_block) = next_block {
-                    func.check_next_block(next_block, block_kind)?;
+                    func.check_next_block(block_kind, next_block)?;
                 }
             }
             Call { callee, calling_convention: _, arguments, ret, next_block, unwind_block } => {
@@ -736,49 +773,26 @@ impl Terminator {
                 }
 
                 if let Some(next_block) = next_block {
-                    func.check_next_block(next_block, block_kind)?;
+                    func.check_next_block(block_kind, next_block)?;
                 }
 
                 if let Some(unwind_block) = unwind_block {
-                    match block_kind {
-                        BbKind::Regular => {
-                            func.check_next_block(unwind_block, BbKind::Cleanup)?;
-                        }
-                        _ => {
-                            func.check_next_block(unwind_block, BbKind::Terminate)?;
-                        }
-                    }
+                    func.check_unwind_block(block_kind, unwind_block)?;
                 }
             }
             Return => {
-                 ensure_wf(block_kind == BbKind::Regular, "Terminator::Return has to be called in a regular block")?;
+                ensure_wf(block_kind == BbKind::Regular, "Terminator::Return has to be called in a regular block")?;
             }
             StartUnwind(unwind_block) => {
-                ensure_wf(block_kind == BbKind::Regular, "Terminator::StartUnwind has to be called in regular block")?;
-                func.check_next_block(unwind_block, BbKind::Cleanup)?;
+                ensure_wf(block_kind == BbKind::Regular, "Terminator::StartUnwind has to be called in a regular block")?;
+                func.check_unwind_block(block_kind, unwind_block)?;
+            }
+            StopUnwind(next_block) => {
+                ensure_wf(block_kind == BbKind::Catch, "Terminator::StopUnwind has to be called in a catch block")?;
+                func.check_next_block(BbKind::Regular, next_block)?;
             }
             ResumeUnwind => {
-                 ensure_wf(block_kind == BbKind::Cleanup, "Terminator::ResumeUnwind: has to be called in cleanup block")?;
-            }
-            CatchUnwind { try_fn, data_ptr, catch_fn, ret, next_block } => {
-                // `try_fn` and `catch_fn` should be function pointers.
-                let try_ty = try_fn.check_wf::<T>(func.locals, prog)?;
-                ensure_wf(matches!(try_ty, Type::Ptr(PtrType::FnPtr)), "Terminator::CatchUnwind: invalid type")?;
-                let catch_ty = catch_fn.check_wf::<T>(func.locals, prog)?;
-                ensure_wf(matches!(catch_ty, Type::Ptr(PtrType::FnPtr)), "Terminator::CatchUnwind: invalid type")?;
-
-                // The return type must typecheck and have type i32.
-                let ret_ty = ret.check_wf::<T>(func.locals, prog)?;
-                ensure_wf(ret_ty == Type::Int(IntType::I32), "Terminator::CatchUnwind: return type should be i32")?;
-
-                // `data_ptr` must typecheck and be a raw pointer.
-                let data_ptr_ty = data_ptr.check_wf::<T>(func.locals, prog)?;         
-                ensure_wf(matches!(data_ptr_ty, Type::Ptr(_)), "Terminator::CatchUnwind: data_ptr must be a pointer")?;
-
-                // Check if `next_block` is valid.
-                if let Some(next_block) = next_block {
-                    func.check_next_block(next_block, block_kind)?;
-                }
+                ensure_wf(block_kind == BbKind::Cleanup, "Terminator::ResumeUnwind: has to be called in cleanup block")?;
             }
         }
 
@@ -820,13 +834,31 @@ impl Function {
     }
 
     /// Checks whether the next block exists and has the correct block kind.
-    fn check_next_block(self, next_block_name: BbName, expected_block_kind: BbKind) -> Result <()> {
-        if let Some(next_block) = self.blocks.get(next_block_name){
-            ensure_wf(next_block.kind == expected_block_kind, "Terminator: next block has the wrong block kind")?;
-        }
-        else{
+    fn check_next_block(self, expected_block_kind: BbKind, next_block_name: BbName) -> Result<()> {
+        let Some(next_block) = self.blocks.get(next_block_name) else {
             throw_ill_formed!("Terminator: next block does not exist");
-        }
+        };
+        ensure_wf(
+            next_block.kind == expected_block_kind,
+            "Terminator: next block has the wrong block kind",
+        )?;
+        ret(())
+    }
+
+    /// Checks whether the unwind block exists and has the correct block kind.
+    fn check_unwind_block(self, current_block_kind: BbKind, unwind_block_name: BbName) -> Result<()> {
+        let expected_block_kinds = match current_block_kind {
+            BbKind::Regular => list![BbKind::Cleanup, BbKind::Catch],
+            BbKind::Cleanup | BbKind::Terminate => list![BbKind::Terminate],
+            BbKind::Catch => throw_ill_formed!("Terminator: unwinding is not allowed in a catch block"),
+        };
+        let Some(unwind_block) = self.blocks.get(unwind_block_name) else {
+            throw_ill_formed!("Terminator: unwind block does not exist");
+        };
+        ensure_wf(
+            expected_block_kinds.any(|kind| kind == unwind_block.kind),
+            "Terminator: unwind block has the wrong block kind",
+        )?;
         ret(())
     }
 }
@@ -852,6 +884,7 @@ impl Program {
         // Check vtables: All vtables for the same trait must have all trait methods defined.
         for (_name, vtable) in self.vtables {
             ensure_wf(vtable.size.bytes() % vtable.align.bytes() == 0, "Program: size stored in vtable not a multiple of alignment")?;
+            UnsafeCellStrategy::check_cells(vtable.cells, vtable.size)?;
             let Some(trait_methods) = self.traits.get(vtable.trait_name) else {
                 throw_ill_formed!("Program: vtable for unknown trait");
             };

@@ -223,6 +223,10 @@ fn fmt_terminator(t: Terminator, comptypes: &mut Vec<CompType>) -> String {
             let bb_name = fmt_bb_name(block_name);
             format!("    start unwind -> unwind: {bb_name} ")
         }
+        Terminator::StopUnwind(block_name) => {
+            let bb_name = fmt_bb_name(block_name);
+            format!("    start unwind -> unwind: {bb_name} ")
+        }
         Terminator::ResumeUnwind => {
             format!("    resume")
         }
@@ -260,21 +264,6 @@ fn fmt_terminator(t: Terminator, comptypes: &mut Vec<CompType>) -> String {
                 comptypes,
             )
         }
-        Terminator::CatchUnwind { try_fn, data_ptr, catch_fn, ret, next_block, .. } => {
-            let try_fmt = fmt_value_expr(try_fn, comptypes).to_string();
-            let data_fmt = fmt_value_expr(data_ptr, comptypes).to_string();
-            let catch_fmt = fmt_value_expr(catch_fn, comptypes).to_string();
-            let args = format!("{:?},{:?},{:?}", try_fmt, data_fmt, catch_fmt).to_string();
-            fmt_call(
-                "catch_unwind",
-                CallingConvention::Rust,
-                args,
-                ret,
-                next_block,
-                None,
-                comptypes,
-            )
-        }
     }
 }
 
@@ -296,6 +285,7 @@ fn fmt_bb_kind(bb: BasicBlock) -> String {
     match bb.kind {
         BbKind::Regular => "".to_string(),
         BbKind::Cleanup => " (Cleanup)".to_string(),
+        BbKind::Catch => " (Catch)".to_string(),
         BbKind::Terminate => " (Terminate)".to_string(),
     }
 }
