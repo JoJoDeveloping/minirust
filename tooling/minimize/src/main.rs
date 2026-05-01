@@ -173,10 +173,13 @@ fn main() {
     }
     let (minimize_args, rustc_args) = split_args(all_args);
     let dump = minimize_args.iter().any(|x| x == "--minimize-dump");
+    let dump_json = minimize_args.iter().any(|x| x == "--minimize-dump=json");
 
     get_mini(rustc_args, |_tcx, prog| {
         if dump {
             dump_program(prog);
+        } else if dump_json {
+            serde_json::to_writer(std::io::stdout(), &prog).expect("Failed to format program as JSON!");
         } else {
             match run_prog(prog, &minimize_args) {
                 // We can't use tcx.dcx().fatal due to <https://github.com/oli-obk/ui_test/issues/226>
